@@ -12,16 +12,16 @@ jobs:
 
     steps:
 
-      # ==============================
-      # 1. تحميل المشروع
-      # ==============================
+      # ==========================================
+      # 1. تحميل المستودع
+      # ==========================================
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
 
-      # ==============================
-      # 2. تجهيز ملفات التطبيق
-      # ==============================
+      # ==========================================
+      # 2. فك نسخة التطبيق الجديدة
+      # ==========================================
       - name: Prepare project
         run: |
           set -e
@@ -38,12 +38,10 @@ jobs:
             exit 1
           fi
 
-          echo "Using project: $ZIP_FILE"
+          echo "Using project:"
+          echo "$ZIP_FILE"
 
           unzip -q "$ZIP_FILE" -d extracted
-
-          echo "Extracted files:"
-          find extracted -maxdepth 3 -type f | head -100
 
           if [ -d "extracted/leyh/leyh" ]; then
             cp -R extracted/leyh/leyh/. .
@@ -53,62 +51,65 @@ jobs:
             cp -R extracted/. .
           fi
 
-          echo "Project root:"
+          echo "Project files:"
           ls -la
 
 
-      # ==============================
-      # 3. Node.js
-      # ==============================
+      # ==========================================
+      # 3. Node.js 22
+      # ==========================================
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
 
 
-      # ==============================
+      # ==========================================
       # 4. تثبيت المكتبات
-      # ==============================
+      # ==========================================
       - name: Install dependencies
         run: |
           set -e
           npm install --legacy-peer-deps
 
 
-      # ==============================
-      # 5. تثبيت TypeScript المتوافق
-      # ==============================
+      # ==========================================
+      # 5. إصلاح TypeScript
+      # ==========================================
       - name: Fix TypeScript
         run: |
           set -e
           npm install --save-dev typescript@5.9.3 --legacy-peer-deps
 
 
-      # ==============================
-      # 6. تثبيت Capacitor
-      # ==============================
+      # ==========================================
+      # 6. تثبيت Capacitor 8
+      # ==========================================
       - name: Install Capacitor
         run: |
           set -e
 
-          npm install @capacitor/core@8 \
+          npm install \
+            @capacitor/core@8 \
             @capacitor/cli@8 \
             @capacitor/android@8 \
             --save \
             --legacy-peer-deps
 
-          npm install @capacitor/local-notifications@8 \
+          npm install \
+            @capacitor/local-notifications@8 \
             --save \
             --legacy-peer-deps
 
-          npm install @capacitor/assets \
+          npm install \
+            @capacitor/assets \
             --save-dev \
             --legacy-peer-deps
 
 
-      # ==============================
+      # ==========================================
       # 7. إعداد Capacitor
-      # ==============================
+      # ==========================================
       - name: Create Capacitor config
         run: |
           cat > capacitor.config.ts <<'EOF'
@@ -118,8 +119,11 @@ jobs:
             appId: 'com.leyhqalha.leyh',
             appName: 'ليه قالها',
             webDir: 'dist',
-            android: {
-              allowMixedContent: false
+
+            plugins: {
+              LocalNotifications: {
+                smallIcon: 'ic_stat_icon_config_sample'
+              }
             }
           };
 
@@ -127,45 +131,215 @@ jobs:
           EOF
 
 
-      # ==============================
+      # ==========================================
       # 8. بناء نسخة الويب
-      # ==============================
+      # ==========================================
       - name: Build web app
         run: |
           set -e
           npm run build
 
 
-      # ==============================
-      # 9. إضافة Android
-      # ==============================
+      # ==========================================
+      # 9. إنشاء مشروع Android
+      # ==========================================
       - name: Add Android
         run: |
           set -e
           npx cap add android
 
 
-      # ==============================
-      # 10. إنشاء أيقونات التطبيق
-      # ==============================
+      # ==========================================
+      # 10. تجهيز Android
+      #     - Android 10+
+      #     - Full Screen
+      #     - صوت الإشعارات
+      #     - صوت صل على محمد
+      # ==========================================
+      - name: Prepare Android
+        run: |
+          set -e
+
+          echo "Preparing Android project..."
+
+          # --------------------------------------
+          # Android 10 minimum
+          # --------------------------------------
+          if [ -f android/variables.gradle ]; then
+            sed -E -i \
+              's/minSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/minSdkVersion = 29/' \
+              android/variables.gradle
+          fi
+
+          # --------------------------------------
+          # إنشاء مجلد أصوات الإشعارات
+          # --------------------------------------
+          mkdir -p android/app/src/main/res/raw
+
+          cp resources/salawat.wav \
+            android/app/src/main/res/raw/salawat.wav
+
+          cp resources/notification.wav \
+            android/app/src/main/res/raw/notification.wav
+
+          # --------------------------------------
+          # إنشاء MainActivity
+          # --------------------------------------
+          MAIN_JAVA_DIR="android/app/src/main/java/com/leyhqalha/leyh"
+
+          mkdir -p "$MAIN_JAVA_DIR"
+
+          find android/app/src/main/java \
+            -type f \
+            \( -name 'MainActivity.java' -o -name 'MainActivity.kt' \) \
+            -delete
+
+          cat > "$MAIN_JAVA_DIR/MainActivity.java" <<'JAVA'
+          package com.leyhqalha.leyh;
+
+          import android.os.Bundle;
+          import android.view.View;
+          import android.view.WindowManager;
+
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  getWindow().setFlags(
+                      WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                      WindowManager.LayoutParams.FLAG_FULLSCREEN
+                  );
+
+                  hideSystemBars();
+              }
+
+              private void hideSystemBars() {
+                  getWindow().getDecorView().setSystemUiVisibility(
+                      View.SYSTEM_UI_FLAG_FULLSCREEN
+                      | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                      | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                      | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                      | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                      | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  );
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  super.onWindowFocusChanged(hasFocus);
+
+                  if (hasFocus) {
+                      hideSystemBars();
+                  }
+              }
+          }
+          JAVA
+
+          echo "Android preparation completed."
+
+
+      # ==========================================
+      # 11. إصلاح build.gradle
+      #     بدون rootProject.ext
+      # ==========================================
+      - name: Fix Android Gradle configuration
+        run: |
+          set -e
+
+          APP_GRADLE="android/app/build.gradle"
+
+          if [ ! -f "$APP_GRADLE" ]; then
+            echo "ERROR: android/app/build.gradle not found"
+            exit 1
+          fi
+
+          echo "Original app/build.gradle:"
+          nl -ba "$APP_GRADLE" | head -80
+
+          # إزالة الاعتماد على rootProject في قيم SDK
+          sed -E -i \
+            's/^[[:space:]]*compileSdk([[:space:]]+|[[:space:]]*=[[:space:]]*).*/    compileSdk 36/' \
+            "$APP_GRADLE"
+
+          sed -E -i \
+            's/^[[:space:]]*minSdkVersion([[:space:]]+|[[:space:]]*=[[:space:]]*).*/        minSdkVersion 29/' \
+            "$APP_GRADLE"
+
+          sed -E -i \
+            's/^[[:space:]]*minSdk([[:space:]]+|[[:space:]]*=[[:space:]]*).*/        minSdk 29/' \
+            "$APP_GRADLE"
+
+          sed -E -i \
+            's/^[[:space:]]*targetSdkVersion([[:space:]]+|[[:space:]]*=[[:space:]]*).*/        targetSdkVersion 36/' \
+            "$APP_GRADLE"
+
+          sed -E -i \
+            's/^[[:space:]]*targetSdk([[:space:]]+|[[:space:]]*=[[:space:]]*).*/        targetSdk 36/' \
+            "$APP_GRADLE"
+
+          echo "Fixed app/build.gradle:"
+          nl -ba "$APP_GRADLE" | head -80
+
+
+      # ==========================================
+      # 12. إنشاء أيقونات التطبيق
+      # ==========================================
       - name: Generate Android icons
         run: |
           set -e
           npx capacitor-assets generate --android
 
 
-      # ==============================
-      # 11. مزامنة Capacitor
-      # ==============================
+      # ==========================================
+      # 13. مزامنة Capacitor
+      # ==========================================
       - name: Sync Capacitor
         run: |
           set -e
           npx cap sync android
 
 
-      # ==============================
-      # 12. Java 21
-      # ==============================
+      # ==========================================
+      # 14. التأكد من الملفات المهمة
+      # ==========================================
+      - name: Verify Android project
+        run: |
+          set -e
+
+          echo "Checking Android files..."
+
+          test -f android/app/build.gradle
+          test -f android/variables.gradle
+          test -f android/gradlew
+
+          test -f android/app/src/main/res/raw/salawat.wav
+          test -f android/app/src/main/res/raw/notification.wav
+
+          test -f android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
+
+          echo "--------------------------------"
+          echo "Android 10 minimum:"
+          grep -n "minSdk" android/variables.gradle || true
+
+          echo "--------------------------------"
+          echo "Notification audio:"
+          ls -lh android/app/src/main/res/raw/
+
+          echo "--------------------------------"
+          echo "MainActivity:"
+          cat android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
+
+          echo "--------------------------------"
+          echo "Android project verification OK."
+
+
+      # ==========================================
+      # 15. Java 21
+      # ==========================================
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:
@@ -173,32 +347,27 @@ jobs:
           java-version: '21'
 
 
-      # ==============================
-      # 13. التأكد من Android API
-      # ==============================
-      - name: Configure Android 10 minimum
+      # ==========================================
+      # 16. إعداد Gradle
+      # ==========================================
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+
+      # ==========================================
+      # 17. تنظيف Gradle
+      # ==========================================
+      - name: Clean Android build
         working-directory: android
         run: |
           set -e
-
-          echo "Checking Android project..."
-
-          if [ -f app/build.gradle ]; then
-            sed -i \
-              's/minSdkVersion [0-9]*/minSdkVersion 29/g' \
-              app/build.gradle || true
-          fi
-
-          if [ -f app/build.gradle.kts ]; then
-            sed -i \
-              's/minSdk[[:space:]]*=[[:space:]]*[0-9]*/minSdk = 29/g' \
-              app/build.gradle.kts || true
-          fi
+          chmod +x gradlew
+          ./gradlew clean --no-daemon
 
 
-      # ==============================
-      # 14. بناء APK
-      # ==============================
+      # ==========================================
+      # 18. بناء APK
+      # ==========================================
       - name: Build APK
         working-directory: android
         run: |
@@ -206,12 +375,14 @@ jobs:
 
           chmod +x gradlew
 
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace
 
 
-      # ==============================
-      # 15. التأكد من وجود APK
-      # ==============================
+      # ==========================================
+      # 19. التأكد من إنشاء APK
+      # ==========================================
       - name: Verify APK
         run: |
           set -e
@@ -220,20 +391,26 @@ jobs:
 
           if [ ! -f "$APK" ]; then
             echo "ERROR: APK was not generated"
+
+            echo "Searching for APK files:"
             find android -type f -name "*.apk" -print
+
             exit 1
           fi
 
-          echo "APK successfully generated:"
+          echo "================================"
+          echo "APK SUCCESSFULLY GENERATED"
+          echo "================================"
+
           ls -lh "$APK"
 
 
-      # ==============================
-      # 16. رفع APK
-      # ==============================
+      # ==========================================
+      # 20. رفع APK
+      # ==========================================
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-debug-apk
+          name: leyh-v12-arabic-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
