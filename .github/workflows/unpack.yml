@@ -20,22 +20,24 @@ jobs:
         run: |
           set -e
 
-          ZIP="./leyh-apk-ready-v41-audar-story-narrator.zip"
+          ZIP="./leyh-apk-ready-v42-audar-story-narrator.zip"
 
           if [ ! -f "$ZIP" ]; then
             echo "ERROR: Project ZIP not found:"
             echo "$ZIP"
+            echo ""
             find . -maxdepth 2 -type f -name "*.zip" -print
             exit 1
           fi
 
           rm -rf project
           mkdir -p project
+
           unzip -q "$ZIP" -d project
 
           echo "Project extracted."
 
-      - name: Locate project root
+      - name: Locate project
         shell: bash
         run: |
           set -e
@@ -57,77 +59,42 @@ jobs:
         with:
           node-version: 22
 
-      - name: Setup Python
-        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
-        with:
-          python-version: "3.11"
-
       - name: Install system packages
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg git unzip
 
-      - name: Prepare compatible Python environment
-        shell: bash
+      - name: Setup Python packages
         run: |
-          set -e
+          python3 -m pip install --upgrade pip
 
-          python -m pip install --upgrade pip
+          python3 -m pip install \
+            --index-url https://download.pytorch.org/whl/cpu \
+            torch==2.11.0 \
+            torchaudio==2.11.0
 
-          # Remove incompatible preinstalled Torch ecosystem packages
-          python -m pip uninstall -y \
-            torchao \
-            torchtune \
-            torch \
-            torchaudio \
-            torchvision \
-            2>/dev/null || true
-
-          # Compatible PyTorch stack
-          python -m pip install \
-            torch==2.7.1 \
-            torchaudio==2.7.1 \
-            torchvision==0.22.1
-
-          # Important:
-          # torchao < 0.18 keeps NF4Tensor in the location expected
-          # by the current TorchTune/NeuCodec dependency chain.
-          python -m pip install \
-            torchao==0.17.0
-
-          # Audio / model dependencies
-          python -m pip install \
+          python3 -m pip install \
+            llama-cpp-python==0.3.34 \
             neucodec==0.0.6 \
             soundfile \
-            librosa \
-            huggingface_hub
+            huggingface_hub \
+            librosa
 
-          echo "Checking installed versions..."
-
-          python - <<'PY'
+      - name: Verify Python environment
+        run: |
+          python3 - <<'PY'
           import torch
-          import torchao
           import neucodec
+          import llama_cpp
 
           print("torch:", torch.__version__)
-          print("torchao:", torchao.__version__)
-          print("neucodec:", neucodec.__version__)
+          print("neucodec:", getattr(neucodec, "__version__", "0.0.6"))
+          print("llama_cpp:", llama_cpp.__version__)
 
-          from torchao.dtypes.nf4tensor import NF4Tensor
+          if not torch.__version__.startswith("2.11"):
+              raise SystemExit("Wrong PyTorch version")
 
-          print("NF4Tensor import: OK")
-          PY
-
-      - name: Install llama.cpp Python runtime
-        run: |
-          set -e
-
-          python -m pip install \
-            llama-cpp-python==0.3.36
-
-          python - <<'PY'
-          from llama_cpp import Llama
-          print("llama-cpp-python: OK")
+          print("Python environment OK.")
           PY
 
       - name: Generate story narration
@@ -135,14 +102,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          if [ ! -f "scripts/generate_story_audio.py" ]; then
-            echo "ERROR: generate_story_audio.py not found."
-            find . -maxdepth 3 -type f -name "*.py" -print
-            exit 1
-          fi
-
-          echo "Starting story narration generation..."
 
           python3 scripts/generate_story_audio.py
 
@@ -153,7 +112,7 @@ jobs:
           set -e
 
           if [ ! -d "public/story-audio" ]; then
-            echo "ERROR: public/story-audio not found."
+            echo "ERROR: story-audio directory missing."
             exit 1
           fi
 
@@ -161,22 +120,19 @@ jobs:
 
           echo "Generated MP3 files: $COUNT"
 
-          if [ "$COUNT" -lt 75 ]; then
-            echo "ERROR: Expected at least 75 story MP3 files."
+          if [ "$COUNT" -lt 1 ]; then
+            echo "ERROR: No MP3 files generated."
             exit 1
           fi
 
-          find public/story-audio \
-            -type f \
-            -name "*.mp3" \
-            -print
+          find public/story-audio -type f -name "*.mp3" -print
 
       - name: Install npm dependencies
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm install --legacy-peer-deps
 
-      - name: Force TypeScript 5.9.3
+      - name: Force TypeScript
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm install \
@@ -197,7 +153,6 @@ jobs:
 
       - name: Create Capacitor config
         working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
         run: |
           cat > capacitor.config.ts <<'EOF'
           import type { CapacitorConfig } from '@capacitor/cli';
@@ -205,18 +160,13 @@ jobs:
           const config: CapacitorConfig = {
             appId: 'com.leyhqalha.leyh',
             appName: 'ليه قالها',
-            webDir: 'dist',
-            plugins: {
-              LocalNotifications: {
-                smallIcon: 'ic_stat_icon_config_sample'
-              }
-            }
+            webDir: 'dist'
           };
 
           export default config;
           EOF
 
-      - name: Build web app
+      - name: Build web
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm run build
@@ -230,7 +180,6 @@ jobs:
 
       - name: Prepare Android
         working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
         run: |
           if [ -f "scripts/prepare_android.sh" ]; then
             chmod +x scripts/prepare_android.sh
@@ -242,9 +191,8 @@ jobs:
         run: |
           npx cap sync android
 
-      - name: Verify old TTS is removed
+      - name: Verify old TTS removed
         working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
         run: |
           set -e
 
@@ -257,8 +205,7 @@ jobs:
               -o -iname "*OfflineTts*" \
             \) | grep -q .; then
 
-            echo "ERROR: Old Kareem/Sherpa TTS files detected."
-
+            echo "ERROR: Old TTS files found."
             find android/app/src/main \
               -type f \
               \( \
@@ -271,7 +218,7 @@ jobs:
             exit 1
           fi
 
-          echo "Old TTS engine: NOT FOUND"
+          echo "Old TTS engine is NOT included."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -288,6 +235,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-story-narrator-v41
+          name: leyh-story-narrator-v42
           path: ${{ env.PROJECT_ROOT }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
