@@ -1,4 +1,4 @@
-name: Build ليه قالها - Story Narrator
+name: Build ليه قالها - Audar Story Narrator
 
 on:
   workflow_dispatch:
@@ -15,41 +15,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Find project ZIP
+      - name: Extract project
         shell: bash
         run: |
           set -e
 
-          ZIP="./leyh-apk-ready-v42-audar-story-narrator.zip"
+          ZIP="leyh-apk-ready-v42-audar-story-narrator.zip"
 
           if [ ! -f "$ZIP" ]; then
-            echo "ERROR: Project ZIP not found:"
-            echo "$ZIP"
-            echo ""
+            echo "ERROR: $ZIP not found"
+            echo "Available ZIP files:"
             find . -maxdepth 2 -type f -name "*.zip" -print
             exit 1
           fi
 
           rm -rf project
-          mkdir -p project
+          mkdir project
 
           unzip -q "$ZIP" -d project
 
-          echo "Project extracted."
-
-      - name: Locate project
-        shell: bash
-        run: |
-          set -e
-
-          if [ -f "project/package.json" ]; then
+          if [ -f project/package.json ]; then
             echo "PROJECT_ROOT=project" >> "$GITHUB_ENV"
-
-          elif [ -f "project/v35work/package.json" ]; then
+          elif [ -f project/v35work/package.json ]; then
             echo "PROJECT_ROOT=project/v35work" >> "$GITHUB_ENV"
-
           else
-            echo "ERROR: package.json not found."
+            echo "ERROR: package.json not found"
             find project -maxdepth 4 -name package.json -print
             exit 1
           fi
@@ -59,43 +49,97 @@ jobs:
         with:
           node-version: 22
 
+      - name: Setup Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg git unzip
+          sudo apt-get install -y ffmpeg git
 
-      - name: Setup Python packages
+      # ---------------------------------------------------------
+      # IMPORTANT:
+      # Create a completely clean Python virtual environment.
+      # No old CUDA Torch is allowed.
+      # ---------------------------------------------------------
+
+      - name: Create clean Python environment
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
-          python3 -m pip install --upgrade pip
+          set -e
 
-          python3 -m pip install \
-            --index-url https://download.pytorch.org/whl/cpu \
-            torch==2.11.0 \
-            torchaudio==2.11.0
+          python -m venv .venv
 
-          python3 -m pip install \
-            llama-cpp-python==0.3.34 \
+          . .venv/bin/activate
+
+          python -m pip install --upgrade pip setuptools wheel
+
+          echo "Python:"
+          python --version
+
+          echo "Installing CPU-only PyTorch 2.12.1..."
+
+          python -m pip install \
+            torch==2.12.1 \
+            torchaudio==2.12.1 \
+            --index-url https://download.pytorch.org/whl/cpu
+
+          echo "Installing NeuCodec..."
+
+          python -m pip install \
             neucodec==0.0.6 \
             soundfile \
             huggingface_hub \
             librosa
 
+          echo "Installing Audar runtime..."
+
+          python -m pip install \
+            llama-cpp-python==0.3.34
+
+      # ---------------------------------------------------------
+      # Verify that the WRONG CUDA Torch is gone.
+      # ---------------------------------------------------------
+
       - name: Verify Python environment
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
-          python3 - <<'PY'
+          set -e
+
+          . .venv/bin/activate
+
+          python - <<'PY'
           import torch
           import neucodec
-          import llama_cpp
 
-          print("torch:", torch.__version__)
-          print("neucodec:", getattr(neucodec, "__version__", "0.0.6"))
-          print("llama_cpp:", llama_cpp.__version__)
+          print("TORCH VERSION:", torch.__version__)
+          print("TORCH CUDA:", torch.version.cuda)
+          print("TORCH CUDA AVAILABLE:", torch.cuda.is_available())
+          print("NEUCODEC:", neucodec)
 
-          if not torch.__version__.startswith("2.11"):
-              raise SystemExit("Wrong PyTorch version")
+          version = torch.__version__.split("+")[0]
+          major, minor, patch = [int(x) for x in version.split(".")[:3]]
 
-          print("Python environment OK.")
+          if (major, minor) < (2, 11):
+              raise RuntimeError(
+                  f"Wrong PyTorch version: {torch.__version__}"
+              )
+
+          if torch.version.cuda is not None:
+              raise RuntimeError(
+                  f"CUDA Torch detected: {torch.__version__}"
+              )
+
+          print("PYTHON ENVIRONMENT OK")
           PY
+
+      # ---------------------------------------------------------
+      # Generate the permanent MP3 story narrations.
+      # ---------------------------------------------------------
 
       - name: Generate story narration
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -103,7 +147,11 @@ jobs:
         run: |
           set -e
 
-          python3 scripts/generate_story_audio.py
+          . .venv/bin/activate
+
+          echo "Starting Audar story narration..."
+
+          python scripts/generate_story_audio.py
 
       - name: Verify story audio
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -111,28 +159,33 @@ jobs:
         run: |
           set -e
 
-          if [ ! -d "public/story-audio" ]; then
-            echo "ERROR: story-audio directory missing."
-            exit 1
-          fi
-
-          COUNT=$(find public/story-audio -type f -name "*.mp3" | wc -l)
+          COUNT=$(find public/story-audio \
+            -type f \
+            -name "*.mp3" | wc -l)
 
           echo "Generated MP3 files: $COUNT"
 
-          if [ "$COUNT" -lt 1 ]; then
-            echo "ERROR: No MP3 files generated."
+          if [ "$COUNT" -lt 75 ]; then
+            echo "ERROR: Expected at least 75 MP3 files."
+            find public/story-audio \
+              -type f \
+              -name "*.mp3" \
+              -print
             exit 1
           fi
 
-          find public/story-audio -type f -name "*.mp3" -print
+          echo "ALL 75 STORY AUDIO FILES ARE READY."
+
+      # ---------------------------------------------------------
+      # Android build
+      # ---------------------------------------------------------
 
       - name: Install npm dependencies
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm install --legacy-peer-deps
 
-      - name: Force TypeScript
+      - name: Pin TypeScript
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm install \
@@ -153,6 +206,7 @@ jobs:
 
       - name: Create Capacitor config
         working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
           cat > capacitor.config.ts <<'EOF'
           import type { CapacitorConfig } from '@capacitor/cli';
@@ -174,51 +228,52 @@ jobs:
       - name: Add Android
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
+          npx cap add android
 
       - name: Prepare Android
         working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
-          if [ -f "scripts/prepare_android.sh" ]; then
-            chmod +x scripts/prepare_android.sh
-            bash scripts/prepare_android.sh
-          fi
+          chmod +x scripts/prepare_android.sh
+          bash scripts/prepare_android.sh
 
       - name: Sync Capacitor
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npx cap sync android
 
-      - name: Verify old TTS removed
+      # ---------------------------------------------------------
+      # Make absolutely sure Kareem/Sherpa were NOT bundled.
+      # ---------------------------------------------------------
+
+      - name: Verify Android TTS removal
         working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
           set -e
 
-          if find android/app/src/main \
-            -type f \
+          echo "Checking for old TTS files..."
+
+          if find android -type f \
             \( \
-              -iname "*.onnx" \
-              -o -iname "*kareem*" \
+              -iname "*kareem*" \
               -o -iname "*sherpa*" \
-              -o -iname "*OfflineTts*" \
+              -o -iname "*.onnx" \
             \) | grep -q .; then
 
-            echo "ERROR: Old TTS files found."
-            find android/app/src/main \
-              -type f \
+            echo "ERROR: Old TTS model detected."
+
+            find android -type f \
               \( \
-                -iname "*.onnx" \
-                -o -iname "*kareem*" \
+                -iname "*kareem*" \
                 -o -iname "*sherpa*" \
-                -o -iname "*OfflineTts*" \
+                -o -iname "*.onnx" \
               \)
 
             exit 1
           fi
 
-          echo "Old TTS engine is NOT included."
+          echo "OLD TTS ENGINE REMOVED."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -228,6 +283,7 @@ jobs:
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_ROOT }}/android
+        shell: bash
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
@@ -235,6 +291,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-story-narrator-v42
+          name: leyh-audar-story-narrator
           path: ${{ env.PROJECT_ROOT }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
