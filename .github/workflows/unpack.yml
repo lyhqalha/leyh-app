@@ -19,7 +19,7 @@ jobs:
           rm -rf extracted
           mkdir -p extracted
 
-          ZIP_FILE="leyh-apk-ready-v13.zip"
+          ZIP_FILE="leyh-apk-ready-v15.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: $ZIP_FILE not found"
@@ -79,7 +79,7 @@ jobs:
       - name: Add Android
         run: npx cap add android
 
-      - name: Prepare Android 10+, fullscreen and local notification audio
+      - name: Prepare Android
         run: bash scripts/prepare_android.sh
 
       - name: Generate Android icons
@@ -88,16 +88,12 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Verify Android settings and audio files
+      - name: Verify Android files
         run: |
-          echo "Checking minimum SDK..."
-          grep -R "minSdk" android/variables.gradle android/app/build.gradle || true
-
           test -f android/app/src/main/res/raw/salawat.wav
           test -f android/app/src/main/res/raw/notification.wav
           test -f android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
-
-          echo "Audio and fullscreen files are present."
+          echo "Android files verified."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -112,6 +108,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v13-arabic-apk
+          name: leyh-v15-arabic-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
