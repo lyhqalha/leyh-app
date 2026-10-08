@@ -11,35 +11,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # ==========================================
-      # 1. تحميل المشروع
-      # ==========================================
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-
-      # ==========================================
-      # 2. فك نسخة التطبيق الجديدة
-      # ==========================================
       - name: Prepare project
         run: |
-          set -e
-
           rm -rf extracted
           mkdir -p extracted
 
-          ZIP_FILE="leyh-apk-ready-v12.zip"
+          ZIP_FILE="leyh-apk-ready-v13.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: $ZIP_FILE not found"
-            echo "Files in repository:"
             ls -la
             exit 1
           fi
-
-          echo "Using project:"
-          echo "$ZIP_FILE"
 
           unzip -q "$ZIP_FILE" -d extracted
 
@@ -51,198 +37,81 @@ jobs:
             cp -R extracted/. .
           fi
 
-          echo "Project files:"
-          ls -la
-
-
-      # ==========================================
-      # 3. Node.js
-      # ==========================================
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
 
-
-      # ==========================================
-      # 4. تثبيت المكتبات
-      # ==========================================
       - name: Install dependencies
-        run: |
-          set -e
-          npm install --legacy-peer-deps
+        run: npm install --legacy-peer-deps
 
-
-      # ==========================================
-      # 5. تثبيت TypeScript المتوافق
-      # ==========================================
       - name: Fix TypeScript
-        run: |
-          set -e
-          npm install --save-dev typescript@5.9.3 --legacy-peer-deps
+        run: npm install --save-dev typescript@5.9.3 --legacy-peer-deps
 
-
-      # ==========================================
-      # 6. تثبيت Capacitor
-      # ==========================================
       - name: Install Capacitor
         run: |
-          set -e
+          npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8 --save --legacy-peer-deps
+          npm install @capacitor/local-notifications@8 --save --legacy-peer-deps
+          npm install @capacitor/assets --save-dev --legacy-peer-deps
 
-          npm install \
-            @capacitor/core@8 \
-            @capacitor/cli@8 \
-            @capacitor/android@8 \
-            --save \
-            --legacy-peer-deps
-
-          npm install \
-            @capacitor/local-notifications@8 \
-            --save \
-            --legacy-peer-deps
-
-          npm install \
-            @capacitor/assets \
-            --save-dev \
-            --legacy-peer-deps
-
-
-      # ==========================================
-      # 7. إعداد Capacitor
-      # ==========================================
       - name: Create Capacitor config
         run: |
-          cat > capacitor.config.ts <<'EOF'
+          cat > capacitor.config.ts <<'EOF2'
           import type { CapacitorConfig } from '@capacitor/cli';
 
           const config: CapacitorConfig = {
             appId: 'com.leyhqalha.leyh',
             appName: 'ليه قالها',
-            webDir: 'dist'
+            webDir: 'dist',
+            plugins: {
+              LocalNotifications: {
+                smallIcon: 'ic_stat_icon_config_sample'
+              }
+            }
           };
 
           export default config;
-          EOF
+          EOF2
 
-
-      # ==========================================
-      # 8. بناء التطبيق
-      # ==========================================
       - name: Build web app
-        run: |
-          set -e
-          npm run build
+        run: npm run build
 
-
-      # ==========================================
-      # 9. إضافة Android
-      # ==========================================
       - name: Add Android
-        run: |
-          set -e
-          npx cap add android
+        run: npx cap add android
 
+      - name: Prepare Android 10+, fullscreen and local notification audio
+        run: bash scripts/prepare_android.sh
 
-      # ==========================================
-      # 10. إنشاء أيقونات التطبيق
-      # ==========================================
       - name: Generate Android icons
-        run: |
-          set -e
-          npx capacitor-assets generate --android
+        run: npx capacitor-assets generate --android
 
-
-      # ==========================================
-      # 11. مزامنة Capacitor
-      # ==========================================
       - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Verify Android settings and audio files
         run: |
-          set -e
-          npx cap sync android
+          echo "Checking minimum SDK..."
+          grep -R "minSdk" android/variables.gradle android/app/build.gradle || true
 
+          test -f android/app/src/main/res/raw/salawat.wav
+          test -f android/app/src/main/res/raw/notification.wav
+          test -f android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
 
-      # ==========================================
-      # 12. Java 21
-      # ==========================================
+          echo "Audio and fullscreen files are present."
+
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:
           distribution: temurin
           java-version: '21'
 
-
-      # ==========================================
-      # 13. التأكد من Android 10+
-      # ==========================================
-      - name: Configure Android 10 minimum
-        run: |
-          set -e
-
-          if [ -f android/variables.gradle ]; then
-
-            echo "Checking variables.gradle..."
-
-            if grep -q "minSdkVersion" android/variables.gradle; then
-
-              sed -E -i \
-                's/minSdkVersion[[:space:]]*=[[:space:]]*[0-9]+/minSdkVersion = 29/' \
-                android/variables.gradle
-
-            fi
-
-          fi
-
-          echo "Android configuration:"
-          grep -n "minSdk" android/variables.gradle || true
-
-
-      # ==========================================
-      # 14. بناء APK
-      # ==========================================
       - name: Build APK
         working-directory: android
-        run: |
-          set -e
+        run: ./gradlew assembleDebug --no-daemon
 
-          chmod +x gradlew
-
-          ./gradlew assembleDebug \
-            --no-daemon \
-            --stacktrace
-
-
-      # ==========================================
-      # 15. التأكد من وجود APK
-      # ==========================================
-      - name: Verify APK
-        run: |
-          set -e
-
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-
-            echo "ERROR: APK was not generated"
-
-            echo "Searching for APK files:"
-            find android -type f -name "*.apk" -print
-
-            exit 1
-          fi
-
-          echo "================================"
-          echo "APK SUCCESSFULLY GENERATED"
-          echo "================================"
-
-          ls -lh "$APK"
-
-
-      # ==========================================
-      # 16. رفع APK
-      # ==========================================
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v12-arabic-apk
+          name: leyh-v13-arabic-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
