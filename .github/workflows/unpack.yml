@@ -1,100 +1,313 @@
-name: Build APK v38 Fixed
+package com.leyhqalha.leyh;
 
-on:
-  workflow_dispatch:
+import android.app.Service;
+import android.content.Intent;
+import android.media.AudioAttributes;
+import android.media.MediaPlayer;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
 
-permissions:
-  contents: read
+import com.k2fsa.sherpa.onnx.GeneratedAudio;
+import com.k2fsa.sherpa.onnx.OfflineTts;
+import com.k2fsa.sherpa.onnx.OfflineTtsConfig;
+import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig;
+import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig;
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+import java.io.File;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+public final class OfflineTtsService extends Service {
 
-      - name: Extract project
-        run: |
-          set -e
+    private static final String MODEL_DIR =
+            "tts-model/vits-piper-ar_JO-kareem-medium";
 
-          ZIP_FILE="leyh-apk-ready-v38-fixed.zip"
+    private final ExecutorService executor =
+            Executors.newSingleThreadExecutor();
 
-          test -f "$ZIP_FILE"
+    private final Handler handler =
+            new Handler(Looper.getMainLooper());
 
-          rm -rf extracted
-          mkdir extracted
-          unzip -q "$ZIP_FILE" -d extracted
+    private OfflineTts tts;
+    private MediaPlayer player;
+    private volatile int requestId = 0;
 
-          if [ -d extracted/v38work ]; then
-            cp -R extracted/v38work/. .
-          elif [ -d extracted/v35work ]; then
-            cp -R extracted/v35work/. .
-          else
-            echo "Project folder not found"
-            find extracted -maxdepth 2 -type d
-            exit 1
-          fi
+    @Override
+    public void onCreate() {
+        super.onCreate();
+    }
 
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        if (intent == null) {
+            return START_NOT_STICKY;
+        }
 
-      - name: Fix TypeScript
-        run: npm install --save-dev typescript@5.9.3 --legacy-peer-deps
+        String command =
+                intent.getStringExtra(OfflineTtsBridge.EXTRA_COMMAND);
 
-      - name: Install Capacitor
-        run: |
-          npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8 --save --legacy-peer-deps
-          npm install @capacitor/local-notifications@8 --save --legacy-peer-deps
-          npm install @capacitor/assets --save-dev --legacy-peer-deps
+        int req =
+                intent.getIntExtra(
+                        OfflineTtsBridge.EXTRA_REQUEST, 0);
 
-      - name: Create Capacitor config
-        run: |
-          cat > capacitor.config.ts <<'EOF'
-          import type { CapacitorConfig } from '@capacitor/cli';
+        if ("stop".equals(command)) {
+            requestId = req;
+            stopAudio();
+            return START_NOT_STICKY;
+        }
 
-          const config: CapacitorConfig = {
-            appId: 'com.leyhqalha.leyh',
-            appName: 'ليه قالها',
-            webDir: 'dist'
-          };
+        if ("pause".equals(command)) {
+            try {
+                if (player != null && player.isPlaying()) {
+                    player.pause();
+                }
+            } catch (Throwable ignored) {
+            }
+            return START_NOT_STICKY;
+        }
 
-          export default config;
-          EOF
+        if ("resume".equals(command)) {
+            try {
+                if (player != null) {
+                    player.start();
+                }
+            } catch (Throwable ignored) {
+            }
+            return START_NOT_STICKY;
+        }
 
-      - name: Build web
-        run: npm run build
+        if ("speak".equals(command)) {
 
-      - name: Add Android
-        run: npx cap add android
+            String text =
+                    intent.getStringExtra(
+                            OfflineTtsBridge.EXTRA_TEXT);
 
-      - name: Prepare Android
-        run: bash scripts/prepare_android.sh
+            float speed =
+                    intent.getFloatExtra(
+                            OfflineTtsBridge.EXTRA_SPEED,
+                            0.9f);
 
-      - name: Generate icons
-        run: npx capacitor-assets generate --android
+            requestId = req;
+            stopAudio();
 
-      - name: Sync Capacitor
-        run: npx cap sync android
+            final String finalText = text;
+            final float finalSpeed = speed;
 
-      - name: Setup Java
-        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
-        with:
-          distribution: temurin
-          java-version: '21'
+            executor.execute(() ->
+                    generateAndPlay(
+                            finalText,
+                            finalSpeed,
+                            req));
+        }
 
-      - name: Build APK
-        working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        return START_NOT_STICKY;
+    }
 
-      - name: Upload APK
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: leyh-v38-fixed-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+    private void generateAndPlay(
+            String text,
+            float speed,
+            int req) {
+
+        try {
+
+            if (text == null || text.trim().isEmpty()) {
+                throw new Exception("النص فارغ");
+            }
+
+            OfflineTts engine = getTts();
+
+            GeneratedAudio audio =
+                    engine.generate(
+                            text,
+                            0,
+                            Math.max(
+                                    0.7f,
+                                    Math.min(1.25f, speed)));
+
+            if (req != requestId) {
+                return;
+            }
+
+            File output =
+                    new File(
+                            getCacheDir(),
+                            "kareem_" + req + ".wav");
+
+            if (!audio.save(output.getAbsolutePath())) {
+                throw new Exception(
+                        "تعذر إنشاء ملف الصوت");
+            }
+
+            playAudio(output, req);
+
+        } catch (Throwable e) {
+
+            if (req == requestId) {
+
+                String message =
+                        e.getMessage();
+
+                if (message == null ||
+                        message.trim().isEmpty()) {
+                    message = "تعذر تشغيل صوت كريم";
+                }
+
+                sendError(req, message);
+            }
+        }
+    }
+
+    private synchronized OfflineTts getTts()
+            throws Exception {
+
+        if (tts != null) {
+            return tts;
+        }
+
+        String model =
+                MODEL_DIR +
+                "/ar_JO-kareem-medium.onnx";
+
+        String tokens =
+                MODEL_DIR +
+                "/tokens.txt";
+
+        String dataDir =
+                MODEL_DIR +
+                "/espeak-ng-data";
+
+        /*
+         * Sherpa-ONNX 1.13.x Java API.
+         * Use Builder API for the configuration.
+         */
+
+        OfflineTtsVitsModelConfig vits =
+                OfflineTtsVitsModelConfig
+                        .builder()
+                        .setModel(model)
+                        .setTokens(tokens)
+                        .setDataDir(dataDir)
+                        .build();
+
+        OfflineTtsModelConfig modelConfig =
+                OfflineTtsModelConfig
+                        .builder()
+                        .setVits(vits)
+                        .setNumThreads(1)
+                        .setDebug(false)
+                        .setProvider("cpu")
+                        .build();
+
+        OfflineTtsConfig config =
+                OfflineTtsConfig
+                        .builder()
+                        .setModel(modelConfig)
+                        .setMaxNumSentences(1)
+                        .build();
+
+        /*
+         * IMPORTANT:
+         * The Android AAR constructor requires
+         * AssetManager + OfflineTtsConfig.
+         */
+        tts =
+                new OfflineTts(
+                        getAssets(),
+                        config);
+
+        return tts;
+    }
+
+    private void playAudio(
+            File file,
+            int req) {
+
+        handler.post(() -> {
+
+            if (req != requestId) {
+                return;
+            }
+
+            stopAudio();
+
+            try {
+
+                player =
+                        new MediaPlayer();
+
+                player.setAudioAttributes(
+                        new AudioAttributes.Builder()
+                                .setUsage(
+                                        AudioAttributes.USAGE_MEDIA)
+                                .setContentType(
+                                        AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build());
+
+                player.setDataSource(
+                        file.getAbsolutePath());
+
+                player.setOnCompletionListener(mp -> {
+
+                    try {
+                        mp.release();
+                    } catch (Throwable ignored) {
+                    }
+
+                    player = null;
+
+                    try {
+                        file.delete();
+                    } catch (Throwable ignored) {
+                    }
+
+                    sendDone(req);
+                });
+
+                player.setOnErrorListener(
+                        (mp, what, extra) -> {
+
+                            try {
+                                mp.release();
+                            } catch (Throwable ignored) {
+                            }
+
+                            player = null;
+
+                            try {
+                                file.delete();
+                            } catch (Throwable ignored) {
+                            }
+
+                            sendError(
+                                    req,
+                                    "تعذر تشغيل ملف صوت كريم");
+
+                            return true;
+                        });
+
+                player.prepare();
+                player.start();
+
+            } catch (Throwable e) {
+
+                try {
+                    if (player != null) {
+                        player.release();
+                    }
+                } catch (Throwable ignored) {
+                }
+
+                player = null;
+
+                try {
+                    file.delete();
+                } catch (Throwable ignored) {
+                }
+
+                String message =
+                        e.getMessage();
+
+                if (message == null ||
+                        message.trim().is
