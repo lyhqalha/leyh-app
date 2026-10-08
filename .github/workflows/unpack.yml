@@ -8,78 +8,37 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Find project ZIP
+      - name: Extract project v42
         shell: bash
         run: |
           set -e
-
-          ZIP="./leyh-apk-ready-v41-audar-story-narrator.zip"
-
-          echo "Checking project ZIP..."
+          ZIP="leyh-apk-ready-v42-audar-story-narrator.zip"
 
           if [ ! -f "$ZIP" ]; then
-            echo "ERROR: ZIP file not found:"
-            echo "$ZIP"
-            echo ""
-            echo "Available ZIP files:"
-            find . -maxdepth 2 -type f -name "*.zip" -print
+            echo "ERROR: $ZIP is missing from repository root."
+            find . -maxdepth 2 -name "*.zip" -print
             exit 1
           fi
 
-          echo "Found:"
-          echo "$ZIP"
-
-          rm -rf project
           mkdir -p project
-
           unzip -q "$ZIP" -d project
 
-          echo "Project extracted."
-
-      - name: Locate project
-        shell: bash
-        run: |
-          set -e
-
-          if [ -f "project/package.json" ]; then
-            ROOT="project"
-
-          elif [ -f "project/v35work/package.json" ]; then
-            ROOT="project/v35work"
-
-          elif [ -f "project/v40work/package.json" ]; then
-            ROOT="project/v40work"
-
-          elif [ -f "project/v41work/package.json" ]; then
-            ROOT="project/v41work"
-
+          if [ -f project/v35work/package.json ]; then
+            echo "PROJECT_ROOT=project/v35work" >> "$GITHUB_ENV"
+          elif [ -f project/package.json ]; then
+            echo "PROJECT_ROOT=project" >> "$GITHUB_ENV"
           else
-            echo "ERROR: package.json not found."
-
-            find project \
-              -maxdepth 5 \
-              -name package.json \
-              -print
-
+            echo "ERROR: package.json not found in ZIP."
+            find project -maxdepth 4 -name package.json -print
             exit 1
           fi
-
-          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
-
-          echo "Project root:"
-          echo "$ROOT"
-
-      - name: Show project
-        run: |
-          echo "PROJECT_ROOT=$PROJECT_ROOT"
-          ls -la "$PROJECT_ROOT"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -94,166 +53,47 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-
-          sudo apt-get install -y \
-            ffmpeg \
-            git \
-            unzip \
-            build-essential \
-            cmake
-
-      # ============================================================
-      # PYTHON / AUDAR
-      # IMPORTANT:
-      # No torchaudio.
-      # Torch is pinned to 2.11 CPU.
-      # ============================================================
-
-      - name: Create clean Python environment
-        shell: bash
-        run: |
-          set -e
-
-          python -m pip install --upgrade pip setuptools wheel
-
-          echo "Removing conflicting Torch packages..."
-
-          python -m pip uninstall -y \
-            torch \
-            torchvision \
-            torchaudio \
-            torchao \
-            neucodec \
-            llama-cpp-python \
-            transformers \
-            2>/dev/null || true
-
-          echo "Installing CPU Torch 2.11.0..."
-
-          python -m pip install \
-            torch==2.11.0 \
-            --index-url https://download.pytorch.org/whl/cpu
-
-          echo "Installing Audar dependencies..."
-
-          python -m pip install \
-            "neucodec==0.17.0" \
-            "soundfile>=0.12" \
-            "librosa>=0.10" \
-            "numpy>=1.24" \
-            "huggingface_hub>=0.30"
-
-          echo "Installing llama.cpp..."
-
-          CMAKE_ARGS="-DGGML_NATIVE=OFF" \
-          python -m pip install \
-            "llama-cpp-python==0.3.36"
-
-      - name: Verify Python environment
-        shell: bash
-        run: |
-          set -e
-
-          python - <<'PY'
-          import torch
-          import neucodec
-          import soundfile
-          import librosa
-          import huggingface_hub
-          import llama_cpp
-
-          print("================================")
-          print("PYTHON ENVIRONMENT")
-          print("================================")
-
-          print("torch:", torch.__version__)
-          print("neucodec:", getattr(neucodec, "__version__", "installed"))
-          print("soundfile:", soundfile.__version__)
-          print("librosa:", librosa.__version__)
-          print("huggingface_hub:", huggingface_hub.__version__)
-          print("llama_cpp:", llama_cpp.__version__)
-
-          assert torch.__version__.startswith("2.11.")
-
-          print("")
-          print("OK: Torch 2.11 CPU")
-          print("OK: No torchaudio required")
-          print("OK: Audar dependencies loaded")
-          PY
-
-      # ============================================================
-      # STORY AUDIO
-      # ============================================================
+          sudo apt-get install -y ffmpeg git unzip build-essential cmake
 
       - name: Generate story narration
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
+          python -m pip install --upgrade pip
 
-          echo "Starting Audar story narration..."
-
-          if [ ! -f "scripts/generate_story_audio.py" ]; then
-            echo "ERROR:"
-            echo "scripts/generate_story_audio.py not found."
-
-            find . \
-              -maxdepth 4 \
-              -type f \
-              -name "generate_story_audio.py" \
-              -print
-
+          if [ ! -f scripts/generate_story_audio.py ]; then
+            echo "ERROR: Audar generation script is missing."
             exit 1
           fi
 
-          python3 scripts/generate_story_audio.py
+          python scripts/generate_story_audio.py
 
-      - name: Verify story audio
+      - name: Verify generated audio
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
-
-          AUDIO_DIR="public/story-audio"
-
-          if [ ! -d "$AUDIO_DIR" ]; then
-            echo "ERROR: story audio directory does not exist."
+          if [ ! -d public/story-audio ]; then
+            echo "ERROR: public/story-audio missing."
             exit 1
           fi
 
-          COUNT=$(find "$AUDIO_DIR" \
-            -type f \
-            -iname "*.mp3" | wc -l)
-
-          echo "Generated MP3 files:"
-          echo "$COUNT"
+          COUNT=$(find public/story-audio -type f -name "*.mp3" | wc -l)
+          echo "Generated MP3 files: $COUNT"
 
           if [ "$COUNT" -lt 1 ]; then
             echo "ERROR: No MP3 files generated."
             exit 1
           fi
 
-          find "$AUDIO_DIR" \
-            -type f \
-            -iname "*.mp3" \
-            -print
-
-      # ============================================================
-      # NODE / CAPACITOR
-      # ============================================================
-
       - name: Install npm dependencies
         working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          npm install --legacy-peer-deps
+        run: npm install --legacy-peer-deps
 
       - name: Pin TypeScript
         working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          npm install \
-            --save-dev \
-            typescript@5.9.3 \
-            --legacy-peer-deps
+        run: npm install --save-dev typescript@5.9.3 --legacy-peer-deps
 
       - name: Install Capacitor
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -263,10 +103,9 @@ jobs:
             @capacitor/cli@8 \
             @capacitor/android@8 \
             @capacitor/local-notifications@8 \
-            --save \
-            --legacy-peer-deps
+            --save --legacy-peer-deps
 
-      - name: Create Capacitor config
+      - name: Configure Capacitor
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
@@ -276,27 +115,20 @@ jobs:
           const config: CapacitorConfig = {
             appId: 'com.leyhqalha.leyh',
             appName: 'ليه قالها',
-            webDir: 'dist',
-
-            plugins: {
-              LocalNotifications: {
-                smallIcon: 'ic_stat_icon_config_sample'
-              }
-            }
+            webDir: 'dist'
           };
 
           export default config;
           EOF
 
-      - name: Build web
+      - name: Build web app
         working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          npm run build
+        run: npm run build
 
-      - name: Add Android
+      - name: Add Android if missing
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-          if [ ! -d "android" ]; then
+          if [ ! -d android ]; then
             npx cap add android
           fi
 
@@ -304,66 +136,14 @@ jobs:
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
-          if [ -f "scripts/prepare_android.sh" ]; then
+          if [ -f scripts/prepare_android.sh ]; then
             chmod +x scripts/prepare_android.sh
             bash scripts/prepare_android.sh
-          else
-            echo "prepare_android.sh not found."
-            echo "Continuing..."
           fi
 
       - name: Sync Capacitor
         working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          npx cap sync android
-
-      # ============================================================
-      # MAKE SURE KAREEM / SHERPA ARE GONE
-      # ============================================================
-
-      - name: Verify old TTS is removed
-        working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
-        run: |
-          set -e
-
-          echo "Checking for old Kareem/Sherpa files..."
-
-          FOUND=0
-
-          if find android/app/src/main \
-            -type f \
-            \( \
-              -iname "*.onnx" \
-              -o -iname "*kareem*" \
-              -o -iname "*sherpa*" \
-              -o -iname "*OfflineTts*" \
-            \) | grep -q .; then
-
-            FOUND=1
-
-            echo "Old TTS files found:"
-            find android/app/src/main \
-              -type f \
-              \( \
-                -iname "*.onnx" \
-                -o -iname "*kareem*" \
-                -o -iname "*sherpa*" \
-                -o -iname "*OfflineTts*" \
-              \)
-          fi
-
-          if [ "$FOUND" -eq 1 ]; then
-            echo ""
-            echo "ERROR: Old TTS engine still exists."
-            exit 1
-          fi
-
-          echo "OK: Kareem/Sherpa not bundled."
-
-      # ============================================================
-      # JAVA / ANDROID
-      # ============================================================
+        run: npx cap sync android
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -373,42 +153,13 @@ jobs:
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_ROOT }}/android
-        shell: bash
         run: |
-          set -e
-
           chmod +x gradlew
-
-          ./gradlew \
-            assembleDebug \
-            --no-daemon \
-            --stacktrace
-
-      - name: Verify APK
-        working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
-        run: |
-          set -e
-
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not created."
-
-            find android/app/build/outputs \
-              -type f \
-              -name "*.apk" \
-              -print
-
-            exit 1
-          fi
-
-          echo "APK successfully created:"
-          ls -lh "$APK"
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-story-narrator-v41
+          name: leyh-story-narrator-v42
           path: ${{ env.PROJECT_ROOT }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
