@@ -27,15 +27,35 @@ jobs:
             exit 1
           fi
 
+          echo "Extracting $ZIP_FILE..."
           unzip -q "$ZIP_FILE" -d extracted
 
-          if [ -d "extracted/leyh/leyh" ]; then
-            cp -R extracted/leyh/leyh/. .
-          elif [ -d "extracted/leyh" ]; then
-            cp -R extracted/leyh/. .
-          else
-            cp -R extracted/. .
+          echo "Searching for package.json..."
+          PACKAGE_JSON=$(find extracted -type f -name "package.json" -print -quit)
+
+          if [ -z "$PACKAGE_JSON" ]; then
+            echo "ERROR: package.json not found inside ZIP"
+            echo "Extracted files:"
+            find extracted -maxdepth 5 -type f | head -300
+            exit 1
           fi
+
+          PROJECT_DIR=$(dirname "$PACKAGE_JSON")
+
+          echo "Project directory found:"
+          echo "$PROJECT_DIR"
+
+          cp -R "$PROJECT_DIR"/. .
+
+          echo "Root files after copy:"
+          ls -la
+
+          if [ ! -f "package.json" ]; then
+            echo "ERROR: package.json was not copied to project root"
+            exit 1
+          fi
+
+          echo "package.json verified successfully."
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
