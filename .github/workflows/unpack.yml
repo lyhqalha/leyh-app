@@ -14,12 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Prepare v27 project
+      - name: Prepare v29 project
         run: |
           rm -rf extracted
           mkdir -p extracted
 
-          ZIP_FILE="leyh-apk-ready-v27.zip"
+          ZIP_FILE="leyh-apk-ready-v29.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: $ZIP_FILE not found"
@@ -29,12 +29,8 @@ jobs:
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          if [ -d "extracted/v26work" ]; then
-            cp -R extracted/v26work/. .
-          elif [ -d "extracted/leyh/leyh" ]; then
-            cp -R extracted/leyh/leyh/. .
-          elif [ -d "extracted/leyh" ]; then
-            cp -R extracted/leyh/. .
+          if [ -d "extracted/v28work" ]; then
+            cp -R extracted/v28work/. .
           else
             cp -R extracted/. .
           fi
@@ -90,12 +86,12 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Verify Android files
+      - name: Verify audio files
         run: |
-          test -f android/app/src/main/res/raw/salawat.wav
-          test -f android/app/src/main/res/raw/notification.wav
-          test -f android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
-          echo "Android files verified."
+          test -f resources/salawat.wav
+          test -f resources/salawat.mp3
+          test -f resources/notification.wav
+          echo "Audio files verified."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -110,6 +106,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v27-arabic-apk
+          name: leyh-v29-arabic-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
