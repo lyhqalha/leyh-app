@@ -29,15 +29,15 @@ jobs:
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          if [ ! -d "extracted/v19work" ]; then
-            echo "ERROR: extracted/v19work not found"
-            find extracted -maxdepth 2 -type d
+          if [ ! -d "extracted/v20work" ]; then
+            echo "ERROR: extracted/v20work not found"
+            find extracted -maxdepth 3 -type d
             exit 1
           fi
 
-          cp -R extracted/v19work/. .
+          cp -R extracted/v20work/. .
 
-          echo "v19 project prepared successfully."
+          echo "v20 project prepared successfully."
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -110,6 +110,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v19-arabic-apk
+          name: leyh-v20-arabic-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
