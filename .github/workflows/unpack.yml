@@ -25,21 +25,15 @@ jobs:
           if [ ! -f "$ZIP" ]; then
             echo "ERROR: Project ZIP not found:"
             echo "$ZIP"
-            echo ""
-            echo "ZIP files موجودة في المستودع:"
             find . -maxdepth 2 -type f -name "*.zip" -print
             exit 1
           fi
 
-          echo "Using project:"
-          echo "$ZIP"
-
           rm -rf project
           mkdir -p project
-
           unzip -q "$ZIP" -d project
 
-          echo "Project extracted successfully."
+          echo "Project extracted."
 
       - name: Locate project root
         shell: bash
@@ -52,22 +46,11 @@ jobs:
           elif [ -f "project/v35work/package.json" ]; then
             echo "PROJECT_ROOT=project/v35work" >> "$GITHUB_ENV"
 
-          elif [ -f "project/v40work/package.json" ]; then
-            echo "PROJECT_ROOT=project/v40work" >> "$GITHUB_ENV"
-
-          elif [ -f "project/v41work/package.json" ]; then
-            echo "PROJECT_ROOT=project/v41work" >> "$GITHUB_ENV"
-
           else
             echo "ERROR: package.json not found."
             find project -maxdepth 4 -name package.json -print
             exit 1
           fi
-
-      - name: Show project root
-        run: |
-          echo "PROJECT_ROOT=$PROJECT_ROOT"
-          ls -la "$PROJECT_ROOT"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -84,16 +67,68 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg git unzip
 
-      - name: Install Python tools
+      - name: Prepare compatible Python environment
+        shell: bash
         run: |
+          set -e
+
           python -m pip install --upgrade pip
 
-          python -m pip install \
+          # Remove incompatible preinstalled Torch ecosystem packages
+          python -m pip uninstall -y \
+            torchao \
+            torchtune \
             torch \
+            torchaudio \
+            torchvision \
+            2>/dev/null || true
+
+          # Compatible PyTorch stack
+          python -m pip install \
+            torch==2.7.1 \
+            torchaudio==2.7.1 \
+            torchvision==0.22.1
+
+          # Important:
+          # torchao < 0.18 keeps NF4Tensor in the location expected
+          # by the current TorchTune/NeuCodec dependency chain.
+          python -m pip install \
+            torchao==0.17.0
+
+          # Audio / model dependencies
+          python -m pip install \
+            neucodec==0.0.6 \
             soundfile \
             librosa \
-            huggingface_hub \
-            neucodec
+            huggingface_hub
+
+          echo "Checking installed versions..."
+
+          python - <<'PY'
+          import torch
+          import torchao
+          import neucodec
+
+          print("torch:", torch.__version__)
+          print("torchao:", torchao.__version__)
+          print("neucodec:", neucodec.__version__)
+
+          from torchao.dtypes.nf4tensor import NF4Tensor
+
+          print("NF4Tensor import: OK")
+          PY
+
+      - name: Install llama.cpp Python runtime
+        run: |
+          set -e
+
+          python -m pip install \
+            llama-cpp-python==0.3.36
+
+          python - <<'PY'
+          from llama_cpp import Llama
+          print("llama-cpp-python: OK")
+          PY
 
       - name: Generate story narration
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -102,9 +137,7 @@ jobs:
           set -e
 
           if [ ! -f "scripts/generate_story_audio.py" ]; then
-            echo "ERROR: scripts/generate_story_audio.py not found."
-            echo ""
-            echo "Available scripts:"
+            echo "ERROR: generate_story_audio.py not found."
             find . -maxdepth 3 -type f -name "*.py" -print
             exit 1
           fi
@@ -120,7 +153,7 @@ jobs:
           set -e
 
           if [ ! -d "public/story-audio" ]; then
-            echo "ERROR: public/story-audio directory not found."
+            echo "ERROR: public/story-audio not found."
             exit 1
           fi
 
@@ -128,19 +161,22 @@ jobs:
 
           echo "Generated MP3 files: $COUNT"
 
-          if [ "$COUNT" -lt 1 ]; then
-            echo "ERROR: No story MP3 files were generated."
+          if [ "$COUNT" -lt 75 ]; then
+            echo "ERROR: Expected at least 75 story MP3 files."
             exit 1
           fi
 
-          find public/story-audio -type f -name "*.mp3" -print
+          find public/story-audio \
+            -type f \
+            -name "*.mp3" \
+            -print
 
       - name: Install npm dependencies
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm install --legacy-peer-deps
 
-      - name: Force compatible TypeScript
+      - name: Force TypeScript 5.9.3
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm install \
@@ -199,8 +235,6 @@ jobs:
           if [ -f "scripts/prepare_android.sh" ]; then
             chmod +x scripts/prepare_android.sh
             bash scripts/prepare_android.sh
-          else
-            echo "prepare_android.sh not found - continuing."
           fi
 
       - name: Sync Capacitor
@@ -208,13 +242,11 @@ jobs:
         run: |
           npx cap sync android
 
-      - name: Verify no Kareem or Sherpa
+      - name: Verify old TTS is removed
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
-
-          echo "Checking Android project for old TTS engine..."
 
           if find android/app/src/main \
             -type f \
@@ -225,7 +257,7 @@ jobs:
               -o -iname "*OfflineTts*" \
             \) | grep -q .; then
 
-            echo "ERROR: Old TTS files are still present."
+            echo "ERROR: Old Kareem/Sherpa TTS files detected."
 
             find android/app/src/main \
               -type f \
@@ -239,7 +271,7 @@ jobs:
             exit 1
           fi
 
-          echo "OK: No Kareem/Sherpa TTS model found."
+          echo "Old TTS engine: NOT FOUND"
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -252,14 +284,6 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
-
-      - name: Find APK
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          find android/app/build/outputs/apk/debug \
-            -type f \
-            -name "*.apk" \
-            -print
 
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
