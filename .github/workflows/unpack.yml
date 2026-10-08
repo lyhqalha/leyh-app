@@ -1,10 +1,10 @@
-name: Build APK
+name: Build ليه قالها - Story Narrator
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -14,92 +14,95 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Prepare project
+      - name: Find project ZIP
+        shell: bash
         run: |
-          rm -rf extracted
-          mkdir -p extracted
+          set -e
+          ZIP=$(find . -maxdepth 2 -type f -name 'leyh-apk-ready-v40-story-narrator.zip' | head -1)
 
-          ZIP_FILE="leyh-apk-ready-v38-fixed-1.zip"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: $ZIP_FILE not found"
-            ls -la
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: leyh-apk-ready-v40-story-narrator.zip not found"
+            find . -maxdepth 2 -type f -name '*.zip' -print
             exit 1
           fi
 
-          echo "Extracting $ZIP_FILE..."
-          unzip -q "$ZIP_FILE" -d extracted
+          echo "Using: $ZIP"
+          mkdir -p project
+          unzip -q "$ZIP" -d project
 
-          echo "Searching for package.json..."
-          PACKAGE_JSON=$(find extracted -type f -name "package.json" -print -quit)
-
-          if [ -z "$PACKAGE_JSON" ]; then
-            echo "ERROR: package.json not found inside ZIP"
-            find extracted -maxdepth 5 -type f | head -300
-            exit 1
+          if [ -d project/v35work ]; then
+            cp -R project/v35work/. .
+          else
+            cp -R project/. .
           fi
-
-          PROJECT_DIR=$(dirname "$PACKAGE_JSON")
-
-          echo "Project directory:"
-          echo "$PROJECT_DIR"
-
-          cp -R "$PROJECT_DIR"/. .
-
-          if [ ! -f "package.json" ]; then
-            echo "ERROR: package.json was not copied"
-            exit 1
-          fi
-
-          echo "Searching for original OfflineTtsService.java..."
-
-          TTS_FILE=$(find extracted -type f -name "OfflineTtsService.java" -print -quit)
-
-          if [ -z "$TTS_FILE" ]; then
-            echo "ERROR: OfflineTtsService.java not found inside ZIP"
-            find extracted -type f -name "*.java" | head -200
-            exit 1
-          fi
-
-          echo "Original TTS file found:"
-          echo "$TTS_FILE"
-
-          TTS_DIR=$(dirname "$TTS_FILE")
-
-          if [ ! -f "OfflineTtsService_FIXED.java" ]; then
-            echo "ERROR: OfflineTtsService_FIXED.java not found in repository"
-            ls -la
-            exit 1
-          fi
-
-          echo "Replacing original OfflineTtsService.java..."
-
-          cp "OfflineTtsService_FIXED.java" "$TTS_DIR/OfflineTtsService.java"
-
-          echo "TTS replacement completed."
-
-          test -f "$TTS_DIR/OfflineTtsService.java"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
+      - name: Setup Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
 
-      - name: Fix TypeScript
-        run: npm install --save-dev typescript@5.9.3 --legacy-peer-deps
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg git
+
+      - name: Install Python tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            torch \
+            soundfile \
+            librosa \
+            huggingface_hub \
+            neucodec \
+            llama-cpp-python
+
+      - name: Generate story narration
+        run: |
+          set -e
+          python3 scripts/generate_story_audio.py
+
+      - name: Verify story audio
+        run: |
+          set -e
+
+          COUNT=$(find public/story-audio -type f -name '*.mp3' | wc -l)
+
+          echo "Generated MP3 files: $COUNT"
+
+          if [ "$COUNT" -lt 1 ]; then
+            echo "ERROR: No story MP3 files generated."
+            exit 1
+          fi
+
+          find public/story-audio -type f -name '*.mp3' -print
+
+      - name: Install npm dependencies
+        run: |
+          npm install --legacy-peer-deps
+
+      - name: Force compatible TypeScript
+        run: |
+          npm install --save-dev typescript@5.9.3 --legacy-peer-deps
 
       - name: Install Capacitor
         run: |
-          npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8 --save --legacy-peer-deps
-          npm install @capacitor/local-notifications@8 --save --legacy-peer-deps
-          npm install @capacitor/assets --save-dev --legacy-peer-deps
+          npm install \
+            @capacitor/core@8 \
+            @capacitor/cli@8 \
+            @capacitor/android@8 \
+            @capacitor/local-notifications@8 \
+            --save \
+            --legacy-peer-deps
 
       - name: Create Capacitor config
         run: |
-          cat > capacitor.config.ts <<'EOF2'
+          cat > capacitor.config.ts <<'EOF'
           import type { CapacitorConfig } from '@capacitor/cli';
 
           const config: CapacitorConfig = {
@@ -114,7 +117,7 @@ jobs:
           };
 
           export default config;
-          EOF2
+          EOF
 
       - name: Build web app
         run: npm run build
@@ -123,34 +126,51 @@ jobs:
         run: npx cap add android
 
       - name: Prepare Android
-        run: bash scripts/prepare_android.sh
-
-      - name: Generate Android icons
-        run: npx capacitor-assets generate --android
+        run: |
+          bash scripts/prepare_android.sh
 
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Verify Android files
+      - name: Verify no TTS model
+        shell: bash
         run: |
-          test -f android/app/src/main/res/raw/salawat.wav
-          test -f android/app/src/main/res/raw/notification.wav
-          test -f android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
-          echo "Android files verified."
+          set -e
+
+          echo "Checking Android assets..."
+
+          if find android/app/src/main -type f \
+            \( -iname '*.onnx' \
+            -o -iname '*kareem*' \
+            -o -iname '*sherpa*' \
+            -o -iname '*OfflineTts*' \) | grep -q .; then
+
+            echo "ERROR: TTS model found in Android project."
+            find android/app/src/main -type f \
+              \( -iname '*.onnx' \
+              -o -iname '*kareem*' \
+              -o -iname '*sherpa*' \
+              -o -iname '*OfflineTts*' \)
+            exit 1
+          fi
+
+          echo "No TTS model bundled."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
 
       - name: Build APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v38-kareem-apk
+          name: leyh-story-narrator-v40
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
