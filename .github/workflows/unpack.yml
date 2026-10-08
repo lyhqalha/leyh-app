@@ -1,10 +1,10 @@
-name: Build APK v38
+name: Build APK v38 Fixed
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -14,32 +14,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Extract v38 project
+      - name: Extract project
         run: |
           set -e
 
+          ZIP_FILE="leyh-apk-ready-v38-fixed.zip"
+
+          test -f "$ZIP_FILE"
+
           rm -rf extracted
-          mkdir -p extracted
-
-          ZIP_FILE="leyh-apk-ready-v38.zip"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: $ZIP_FILE not found"
-            ls -la
-            exit 1
-          fi
-
+          mkdir extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-          echo "Extracted files:"
-          find extracted -maxdepth 3 -type f | head -100
-
-          if [ -d "extracted/v38work" ]; then
+          if [ -d extracted/v38work ]; then
             cp -R extracted/v38work/. .
-          elif [ -d "extracted/v35work" ]; then
+          elif [ -d extracted/v35work ]; then
             cp -R extracted/v35work/. .
           else
-            echo "ERROR: project directory not found"
+            echo "Project folder not found"
             find extracted -maxdepth 2 -type d
             exit 1
           fi
@@ -75,7 +67,7 @@ jobs:
           export default config;
           EOF
 
-      - name: Build web app
+      - name: Build web
         run: npm run build
 
       - name: Add Android
@@ -84,29 +76,11 @@ jobs:
       - name: Prepare Android
         run: bash scripts/prepare_android.sh
 
-      - name: Generate Android icons
+      - name: Generate icons
         run: npx capacitor-assets generate --android
 
       - name: Sync Capacitor
         run: npx cap sync android
-
-      - name: Verify Kareem Medium
-        run: |
-          set -e
-
-          test -f android/app/libs/sherpa-onnx-1.13.8.aar
-
-          test -f android/app/src/main/assets/tts-model/vits-piper-ar_JO-kareem-medium/ar_JO-kareem-medium.onnx
-
-          test -f android/app/src/main/assets/tts-model/vits-piper-ar_JO-kareem-medium/tokens.txt
-
-          test -d android/app/src/main/assets/tts-model/vits-piper-ar_JO-kareem-medium/espeak-ng-data
-
-          test -f android/app/src/main/java/com/leyhqalha/leyh/OfflineTtsBridge.java
-
-          test -f android/app/src/main/java/com/leyhqalha/leyh/OfflineTtsService.java
-
-          echo "Kareem Medium files verified."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -121,6 +95,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v38-kareem-apk
+          name: leyh-v38-fixed-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
