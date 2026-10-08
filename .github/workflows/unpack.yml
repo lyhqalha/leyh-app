@@ -310,4 +310,92 @@ public final class OfflineTtsService extends Service {
                         e.getMessage();
 
                 if (message == null ||
-                        message.trim().is
+                        message.trim().isEmpty()) {
+                    message = "تعذر تشغيل الصوت";
+                }
+
+                sendError(req, message);
+            }
+        });
+    }
+
+    private synchronized void stopAudio() {
+
+        if (player != null) {
+
+            try {
+                if (player.isPlaying()) {
+                    player.stop();
+                }
+            } catch (Throwable ignored) {
+            }
+
+            try {
+                player.release();
+            } catch (Throwable ignored) {
+            }
+
+            player = null;
+        }
+    }
+
+    private void sendDone(int req) {
+
+        Intent intent =
+                new Intent(
+                        OfflineTtsBridge.ACTION_DONE);
+
+        intent.setPackage(getPackageName());
+
+        intent.putExtra(
+                OfflineTtsBridge.EXTRA_REQUEST,
+                req);
+
+        sendBroadcast(intent);
+    }
+
+    private void sendError(
+            int req,
+            String message) {
+
+        Intent intent =
+                new Intent(
+                        OfflineTtsBridge.ACTION_ERROR);
+
+        intent.setPackage(getPackageName());
+
+        intent.putExtra(
+                OfflineTtsBridge.EXTRA_REQUEST,
+                req);
+
+        intent.putExtra(
+                OfflineTtsBridge.EXTRA_MESSAGE,
+                message);
+
+        sendBroadcast(intent);
+    }
+
+    @Override
+    public void onDestroy() {
+
+        stopAudio();
+
+        executor.shutdownNow();
+
+        try {
+            if (tts != null) {
+                tts.release();
+            }
+        } catch (Throwable ignored) {
+        }
+
+        tts = null;
+
+        super.onDestroy();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+}
