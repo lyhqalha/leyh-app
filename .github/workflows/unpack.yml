@@ -19,15 +19,14 @@ jobs:
           rm -rf extracted
           mkdir -p extracted
 
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name 'leyh-apk-ready*.zip' | head -n 1)
+          ZIP_FILE="leyh-apk-ready-v6.zip"
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: $ZIP_FILE not found"
             exit 1
           fi
 
           echo "Using: $ZIP_FILE"
-
           unzip -q "$ZIP_FILE" -d extracted
 
           if [ -d "extracted/leyh/leyh" ]; then
