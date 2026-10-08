@@ -14,11 +14,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Prepare v30 project
+      - name: Prepare v31 project
         run: |
           rm -rf extracted
           mkdir -p extracted
-          ZIP_FILE="leyh-apk-ready-v30.zip"
+          ZIP_FILE="leyh-apk-ready-v31.zip"
           test -f "$ZIP_FILE"
           unzip -q "$ZIP_FILE" -d extracted
           if [ -d "extracted/v28work" ]; then
@@ -93,6 +93,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v30-arabic-apk
+          name: leyh-v31-arabic-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
