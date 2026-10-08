@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
@@ -18,23 +19,55 @@ jobs:
         shell: bash
         run: |
           set -e
-          ZIP=$(find . -maxdepth 2 -type f -name 'leyh-apk-ready-v40-story-narrator.zip' | head -1)
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: leyh-apk-ready-v40-story-narrator.zip not found"
-            find . -maxdepth 2 -type f -name '*.zip' -print
+          ZIP="./leyh-apk-ready-v41-audar-story-narrator.zip"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "ERROR: Project ZIP not found:"
+            echo "$ZIP"
+            echo ""
+            echo "ZIP files موجودة في المستودع:"
+            find . -maxdepth 2 -type f -name "*.zip" -print
             exit 1
           fi
 
-          echo "Using: $ZIP"
+          echo "Using project:"
+          echo "$ZIP"
+
+          rm -rf project
           mkdir -p project
+
           unzip -q "$ZIP" -d project
 
-          if [ -d project/v35work ]; then
-            cp -R project/v35work/. .
+          echo "Project extracted successfully."
+
+      - name: Locate project root
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f "project/package.json" ]; then
+            echo "PROJECT_ROOT=project" >> "$GITHUB_ENV"
+
+          elif [ -f "project/v35work/package.json" ]; then
+            echo "PROJECT_ROOT=project/v35work" >> "$GITHUB_ENV"
+
+          elif [ -f "project/v40work/package.json" ]; then
+            echo "PROJECT_ROOT=project/v40work" >> "$GITHUB_ENV"
+
+          elif [ -f "project/v41work/package.json" ]; then
+            echo "PROJECT_ROOT=project/v41work" >> "$GITHUB_ENV"
+
           else
-            cp -R project/. .
+            echo "ERROR: package.json not found."
+            find project -maxdepth 4 -name package.json -print
+            exit 1
           fi
+
+      - name: Show project root
+        run: |
+          echo "PROJECT_ROOT=$PROJECT_ROOT"
+          ls -la "$PROJECT_ROOT"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -49,48 +82,74 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg git
+          sudo apt-get install -y ffmpeg git unzip
 
       - name: Install Python tools
         run: |
           python -m pip install --upgrade pip
+
           python -m pip install \
             torch \
             soundfile \
             librosa \
             huggingface_hub \
-            neucodec \
-            llama-cpp-python
+            neucodec
 
       - name: Generate story narration
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
           set -e
+
+          if [ ! -f "scripts/generate_story_audio.py" ]; then
+            echo "ERROR: scripts/generate_story_audio.py not found."
+            echo ""
+            echo "Available scripts:"
+            find . -maxdepth 3 -type f -name "*.py" -print
+            exit 1
+          fi
+
+          echo "Starting story narration generation..."
+
           python3 scripts/generate_story_audio.py
 
       - name: Verify story audio
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
           set -e
 
-          COUNT=$(find public/story-audio -type f -name '*.mp3' | wc -l)
+          if [ ! -d "public/story-audio" ]; then
+            echo "ERROR: public/story-audio directory not found."
+            exit 1
+          fi
+
+          COUNT=$(find public/story-audio -type f -name "*.mp3" | wc -l)
 
           echo "Generated MP3 files: $COUNT"
 
           if [ "$COUNT" -lt 1 ]; then
-            echo "ERROR: No story MP3 files generated."
+            echo "ERROR: No story MP3 files were generated."
             exit 1
           fi
 
-          find public/story-audio -type f -name '*.mp3' -print
+          find public/story-audio -type f -name "*.mp3" -print
 
       - name: Install npm dependencies
+        working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm install --legacy-peer-deps
 
       - name: Force compatible TypeScript
+        working-directory: ${{ env.PROJECT_ROOT }}
         run: |
-          npm install --save-dev typescript@5.9.3 --legacy-peer-deps
+          npm install \
+            --save-dev \
+            typescript@5.9.3 \
+            --legacy-peer-deps
 
       - name: Install Capacitor
+        working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           npm install \
             @capacitor/core@8 \
@@ -101,6 +160,8 @@ jobs:
             --legacy-peer-deps
 
       - name: Create Capacitor config
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
           cat > capacitor.config.ts <<'EOF'
           import type { CapacitorConfig } from '@capacitor/cli';
@@ -120,41 +181,65 @@ jobs:
           EOF
 
       - name: Build web app
-        run: npm run build
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          npm run build
 
       - name: Add Android
-        run: npx cap add android
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
 
       - name: Prepare Android
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: bash
         run: |
-          bash scripts/prepare_android.sh
+          if [ -f "scripts/prepare_android.sh" ]; then
+            chmod +x scripts/prepare_android.sh
+            bash scripts/prepare_android.sh
+          else
+            echo "prepare_android.sh not found - continuing."
+          fi
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          npx cap sync android
 
-      - name: Verify no TTS model
+      - name: Verify no Kareem or Sherpa
+        working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
 
-          echo "Checking Android assets..."
+          echo "Checking Android project for old TTS engine..."
 
-          if find android/app/src/main -type f \
-            \( -iname '*.onnx' \
-            -o -iname '*kareem*' \
-            -o -iname '*sherpa*' \
-            -o -iname '*OfflineTts*' \) | grep -q .; then
+          if find android/app/src/main \
+            -type f \
+            \( \
+              -iname "*.onnx" \
+              -o -iname "*kareem*" \
+              -o -iname "*sherpa*" \
+              -o -iname "*OfflineTts*" \
+            \) | grep -q .; then
 
-            echo "ERROR: TTS model found in Android project."
-            find android/app/src/main -type f \
-              \( -iname '*.onnx' \
-              -o -iname '*kareem*' \
-              -o -iname '*sherpa*' \
-              -o -iname '*OfflineTts*' \)
+            echo "ERROR: Old TTS files are still present."
+
+            find android/app/src/main \
+              -type f \
+              \( \
+                -iname "*.onnx" \
+                -o -iname "*kareem*" \
+                -o -iname "*sherpa*" \
+                -o -iname "*OfflineTts*" \
+              \)
+
             exit 1
           fi
 
-          echo "No TTS model bundled."
+          echo "OK: No Kareem/Sherpa TTS model found."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -163,14 +248,22 @@ jobs:
           java-version: "21"
 
       - name: Build APK
-        working-directory: android
+        working-directory: ${{ env.PROJECT_ROOT }}/android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
+      - name: Find APK
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          find android/app/build/outputs/apk/debug \
+            -type f \
+            -name "*.apk" \
+            -print
+
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-story-narrator-v40
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: leyh-story-narrator-v41
+          path: ${{ env.PROJECT_ROOT }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
