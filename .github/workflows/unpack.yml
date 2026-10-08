@@ -14,18 +14,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Prepare v31 project
+      - name: Prepare v32 project
         run: |
           rm -rf extracted
           mkdir -p extracted
-          ZIP_FILE="leyh-apk-ready-v31.zip"
+          ZIP_FILE="leyh-apk-ready-v32.zip"
           test -f "$ZIP_FILE"
           unzip -q "$ZIP_FILE" -d extracted
-          if [ -d "extracted/v28work" ]; then
-            cp -R extracted/v28work/. .
-          else
-            cp -R extracted/. .
-          fi
+          cp -R extracted/v28work/. .
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -46,16 +42,20 @@ jobs:
 
       - name: Create Capacitor config
         run: |
-          cat > capacitor.config.ts <<'EOF2'
+          cat > capacitor.config.ts <<'EOF'
           import type { CapacitorConfig } from '@capacitor/cli';
           const config: CapacitorConfig = {
             appId: 'com.leyhqalha.leyh',
             appName: 'ليه قالها',
             webDir: 'dist',
-            plugins: { LocalNotifications: { smallIcon: 'ic_stat_icon_config_sample' } }
+            plugins: {
+              LocalNotifications: {
+                smallIcon: 'ic_stat_icon_config_sample'
+              }
+            }
           };
           export default config;
-          EOF2
+          EOF
 
       - name: Build web app
         run: npm run build
@@ -72,13 +72,13 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Verify audio and TTS files
+      - name: Verify files
         run: |
           test -f resources/salawat.wav
           test -f resources/notification.wav
           test -f android/app/src/main/java/com/leyhqalha/leyh/OfflineTtsBridge.java
           test -f android/app/src/main/assets/tts-model/vits-piper-ar_JO-kareem-medium/ar_JO-kareem-medium.onnx
-          echo "Audio and Kareem TTS files verified."
+          echo "All files verified."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -93,6 +93,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v31-arabic-apk
+          name: leyh-v32-arabic-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
