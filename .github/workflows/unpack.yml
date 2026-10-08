@@ -35,27 +35,50 @@ jobs:
 
           if [ -z "$PACKAGE_JSON" ]; then
             echo "ERROR: package.json not found inside ZIP"
-            echo "Extracted files:"
             find extracted -maxdepth 5 -type f | head -300
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PACKAGE_JSON")
 
-          echo "Project directory found:"
+          echo "Project directory:"
           echo "$PROJECT_DIR"
 
           cp -R "$PROJECT_DIR"/. .
 
-          echo "Root files after copy:"
-          ls -la
-
           if [ ! -f "package.json" ]; then
-            echo "ERROR: package.json was not copied to project root"
+            echo "ERROR: package.json was not copied"
             exit 1
           fi
 
-          echo "package.json verified successfully."
+          echo "Searching for original OfflineTtsService.java..."
+
+          TTS_FILE=$(find extracted -type f -name "OfflineTtsService.java" -print -quit)
+
+          if [ -z "$TTS_FILE" ]; then
+            echo "ERROR: OfflineTtsService.java not found inside ZIP"
+            find extracted -type f -name "*.java" | head -200
+            exit 1
+          fi
+
+          echo "Original TTS file found:"
+          echo "$TTS_FILE"
+
+          TTS_DIR=$(dirname "$TTS_FILE")
+
+          if [ ! -f "OfflineTtsService_FIXED.java" ]; then
+            echo "ERROR: OfflineTtsService_FIXED.java not found in repository"
+            ls -la
+            exit 1
+          fi
+
+          echo "Replacing original OfflineTtsService.java..."
+
+          cp "OfflineTtsService_FIXED.java" "$TTS_DIR/OfflineTtsService.java"
+
+          echo "TTS replacement completed."
+
+          test -f "$TTS_DIR/OfflineTtsService.java"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -128,6 +151,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v38-arabic-apk
+          name: leyh-v38-kareem-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
