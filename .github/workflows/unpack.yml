@@ -19,7 +19,7 @@ jobs:
           rm -rf extracted
           mkdir -p extracted
 
-          ZIP_FILE="leyh-apk-ready-v19.zip"
+          ZIP_FILE="leyh-apk-ready-v20.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: $ZIP_FILE not found"
