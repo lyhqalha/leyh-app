@@ -14,11 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Prepare v25 project
+      - name: Prepare v27 project
         run: |
           rm -rf extracted
+          mkdir -p extracted
 
-          ZIP_FILE="leyh-apk-ready-v25.zip"
+          ZIP_FILE="leyh-apk-ready-v27.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: $ZIP_FILE not found"
@@ -26,19 +27,17 @@ jobs:
             exit 1
           fi
 
-          mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-          if [ -d "extracted/v25work" ]; then
-            cp -R extracted/v25work/. .
+          if [ -d "extracted/v26work" ]; then
+            cp -R extracted/v26work/. .
+          elif [ -d "extracted/leyh/leyh" ]; then
+            cp -R extracted/leyh/leyh/. .
           elif [ -d "extracted/leyh" ]; then
             cp -R extracted/leyh/. .
           else
             cp -R extracted/. .
           fi
-
-          echo "Project prepared successfully."
-          ls -la
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -59,7 +58,7 @@ jobs:
 
       - name: Create Capacitor config
         run: |
-          cat > capacitor.config.ts <<'EOF'
+          cat > capacitor.config.ts <<'EOF2'
           import type { CapacitorConfig } from '@capacitor/cli';
 
           const config: CapacitorConfig = {
@@ -74,7 +73,7 @@ jobs:
           };
 
           export default config;
-          EOF
+          EOF2
 
       - name: Build web app
         run: npm run build
@@ -93,6 +92,8 @@ jobs:
 
       - name: Verify Android files
         run: |
+          test -f android/app/src/main/res/raw/salawat.wav
+          test -f android/app/src/main/res/raw/notification.wav
           test -f android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
           echo "Android files verified."
 
@@ -109,6 +110,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v25-arabic-apk
+          name: leyh-v27-arabic-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
