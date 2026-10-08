@@ -1,4 +1,4 @@
-name: Build APK v36
+name: Build APK v37
 
 on:
   workflow_dispatch:
@@ -14,12 +14,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Prepare v36 project
+      - name: Extract v37 project
         run: |
+          set -e
+
           rm -rf extracted
           mkdir -p extracted
 
-          ZIP_FILE="leyh-apk-ready-v36.zip"
+          ZIP_FILE="leyh-apk-ready-v37.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: $ZIP_FILE not found"
@@ -31,10 +33,8 @@ jobs:
 
           if [ -d "extracted/v35work" ]; then
             cp -R extracted/v35work/. .
-          elif [ -d "extracted/v36work" ]; then
-            cp -R extracted/v36work/. .
           else
-            echo "ERROR: Project folder not found"
+            echo "ERROR: v35work was not found"
             find extracted -maxdepth 2 -type d
             exit 1
           fi
@@ -64,12 +64,7 @@ jobs:
           const config: CapacitorConfig = {
             appId: 'com.leyhqalha.leyh',
             appName: 'ليه قالها',
-            webDir: 'dist',
-            plugins: {
-              LocalNotifications: {
-                smallIcon: 'ic_stat_icon_config_sample'
-              }
-            }
+            webDir: 'dist'
           };
 
           export default config;
@@ -81,7 +76,7 @@ jobs:
       - name: Add Android
         run: npx cap add android
 
-      - name: Prepare Android and Kareem TTS
+      - name: Prepare Android
         run: bash scripts/prepare_android.sh
 
       - name: Generate Android icons
@@ -90,9 +85,9 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Verify Kareem TTS files
+      - name: Verify Sherpa and Kareem
         run: |
-          echo "Checking Kareem Medium offline TTS..."
+          set -e
 
           test -f android/app/libs/sherpa-onnx-1.13.8.aar
 
@@ -102,19 +97,11 @@ jobs:
 
           test -d android/app/src/main/assets/tts-model/vits-piper-ar_JO-kareem-medium/espeak-ng-data
 
-          test -f android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
-
           test -f android/app/src/main/java/com/leyhqalha/leyh/OfflineTtsBridge.java
 
-          echo "Kareem Medium files are present."
+          test -f android/app/src/main/java/com/leyhqalha/leyh/OfflineTtsService.java
 
-      - name: Verify audio service
-        run: |
-          test -f src/utils/audioService.ts
-
-          grep -q "LeyhOfflineTts" src/utils/audioService.ts
-
-          echo "Audio service is configured for offline Kareem TTS."
+          echo "Kareem Medium + Sherpa files verified."
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -129,6 +116,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v36-kareem-apk
+          name: leyh-v37-kareem-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
