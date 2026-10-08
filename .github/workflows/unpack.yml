@@ -11,15 +11,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==============================
+      # 1. تحميل المشروع
+      # ==============================
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
+
+      # ==============================
+      # 2. تجهيز ملفات التطبيق
+      # ==============================
       - name: Prepare project
         run: |
+          set -e
+
           rm -rf extracted
           mkdir -p extracted
 
-          ZIP_FILE="leyh-apk-ready-v9.zip"
+          ZIP_FILE="leyh-apk-ready-v12.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: $ZIP_FILE not found"
@@ -28,9 +38,12 @@ jobs:
             exit 1
           fi
 
-          echo "Using: $ZIP_FILE"
+          echo "Using project: $ZIP_FILE"
 
           unzip -q "$ZIP_FILE" -d extracted
+
+          echo "Extracted files:"
+          find extracted -maxdepth 3 -type f | head -100
 
           if [ -d "extracted/leyh/leyh" ]; then
             cp -R extracted/leyh/leyh/. .
@@ -40,23 +53,62 @@ jobs:
             cp -R extracted/. .
           fi
 
+          echo "Project root:"
+          ls -la
+
+
+      # ==============================
+      # 3. Node.js
+      # ==============================
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
 
+
+      # ==============================
+      # 4. تثبيت المكتبات
+      # ==============================
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: |
+          set -e
+          npm install --legacy-peer-deps
 
+
+      # ==============================
+      # 5. تثبيت TypeScript المتوافق
+      # ==============================
       - name: Fix TypeScript
-        run: npm install --save-dev typescript@5.9.3 --legacy-peer-deps
+        run: |
+          set -e
+          npm install --save-dev typescript@5.9.3 --legacy-peer-deps
 
+
+      # ==============================
+      # 6. تثبيت Capacitor
+      # ==============================
       - name: Install Capacitor
         run: |
-          npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8 --save --legacy-peer-deps
-          npm install @capacitor/local-notifications@8 --save --legacy-peer-deps
-          npm install @capacitor/assets --save-dev --legacy-peer-deps
+          set -e
 
+          npm install @capacitor/core@8 \
+            @capacitor/cli@8 \
+            @capacitor/android@8 \
+            --save \
+            --legacy-peer-deps
+
+          npm install @capacitor/local-notifications@8 \
+            --save \
+            --legacy-peer-deps
+
+          npm install @capacitor/assets \
+            --save-dev \
+            --legacy-peer-deps
+
+
+      # ==============================
+      # 7. إعداد Capacitor
+      # ==============================
       - name: Create Capacitor config
         run: |
           cat > capacitor.config.ts <<'EOF'
@@ -66,41 +118,122 @@ jobs:
             appId: 'com.leyhqalha.leyh',
             appName: 'ليه قالها',
             webDir: 'dist',
-            plugins: {
-              LocalNotifications: {
-                smallIcon: 'ic_stat_icon_config_sample'
-              }
+            android: {
+              allowMixedContent: false
             }
           };
 
           export default config;
           EOF
 
+
+      # ==============================
+      # 8. بناء نسخة الويب
+      # ==============================
       - name: Build web app
-        run: npm run build
+        run: |
+          set -e
+          npm run build
 
+
+      # ==============================
+      # 9. إضافة Android
+      # ==============================
       - name: Add Android
-        run: npx cap add android
+        run: |
+          set -e
+          npx cap add android
 
+
+      # ==============================
+      # 10. إنشاء أيقونات التطبيق
+      # ==============================
       - name: Generate Android icons
-        run: npx capacitor-assets generate --android
+        run: |
+          set -e
+          npx capacitor-assets generate --android
 
+
+      # ==============================
+      # 11. مزامنة Capacitor
+      # ==============================
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: |
+          set -e
+          npx cap sync android
 
+
+      # ==============================
+      # 12. Java 21
+      # ==============================
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:
           distribution: temurin
           java-version: '21'
 
+
+      # ==============================
+      # 13. التأكد من Android API
+      # ==============================
+      - name: Configure Android 10 minimum
+        working-directory: android
+        run: |
+          set -e
+
+          echo "Checking Android project..."
+
+          if [ -f app/build.gradle ]; then
+            sed -i \
+              's/minSdkVersion [0-9]*/minSdkVersion 29/g' \
+              app/build.gradle || true
+          fi
+
+          if [ -f app/build.gradle.kts ]; then
+            sed -i \
+              's/minSdk[[:space:]]*=[[:space:]]*[0-9]*/minSdk = 29/g' \
+              app/build.gradle.kts || true
+          fi
+
+
+      # ==============================
+      # 14. بناء APK
+      # ==============================
       - name: Build APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          set -e
 
+          chmod +x gradlew
+
+          ./gradlew assembleDebug --no-daemon
+
+
+      # ==============================
+      # 15. التأكد من وجود APK
+      # ==============================
+      - name: Verify APK
+        run: |
+          set -e
+
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated"
+            find android -type f -name "*.apk" -print
+            exit 1
+          fi
+
+          echo "APK successfully generated:"
+          ls -lh "$APK"
+
+
+      # ==============================
+      # 16. رفع APK
+      # ==============================
       - name: Upload APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: leyh-v9-apk
+          name: leyh-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
