@@ -1,0 +1,69 @@
+name: Build APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Prepare v28 project
+        run: |
+          rm -rf extracted
+          mkdir -p extracted
+          unzip -q leyh-apk-ready-v28.zip -d extracted
+          if [ -d extracted/v26work ]; then cp -R extracted/v26work/. .; else cp -R extracted/. .; fi
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+      - name: Fix TypeScript
+        run: npm install --save-dev typescript@5.9.3 --legacy-peer-deps
+      - name: Install Capacitor
+        run: |
+          npm install @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8 --save --legacy-peer-deps
+          npm install @capacitor/local-notifications@8 --save --legacy-peer-deps
+          npm install @capacitor/assets --save-dev --legacy-peer-deps
+      - name: Create Capacitor config
+        run: |
+          cat > capacitor.config.ts <<'EOF2'
+          import type { CapacitorConfig } from '@capacitor/cli';
+          const config: CapacitorConfig = { appId: 'com.leyhqalha.leyh', appName: 'ليه قالها', webDir: 'dist', plugins: { LocalNotifications: { smallIcon: 'ic_stat_icon_config_sample' } } };
+          export default config;
+          EOF2
+      - name: Build web app
+        run: npm run build
+      - name: Add Android
+        run: npx cap add android
+      - name: Prepare Android + offline Kareem TTS
+        run: bash scripts/prepare_android.sh
+      - name: Generate Android icons
+        run: npx capacitor-assets generate --android
+      - name: Sync Capacitor
+        run: npx cap sync android
+      - name: Verify offline TTS
+        run: |
+          test -f android/app/libs/sherpa-onnx-1.13.8.aar
+          test -f android/app/src/main/assets/tts-model/vits-piper-ar_JO-kareem-medium/ar_JO-kareem-medium.onnx
+          test -f android/app/src/main/assets/tts-model/vits-piper-ar_JO-kareem-medium/tokens.txt
+          test -d android/app/src/main/assets/tts-model/vits-piper-ar_JO-kareem-medium/espeak-ng-data
+          test -f android/app/src/main/java/com/leyhqalha/leyh/MainActivity.java
+          test -f android/app/src/main/java/com/leyhqalha/leyh/OfflineTtsBridge.java
+      - name: Setup Java
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Upload APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: leyh-v28-kareem-offline-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
