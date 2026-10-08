@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
 
@@ -41,22 +41,45 @@ jobs:
 
           unzip -q "$ZIP" -d project
 
+          echo "Project extracted."
+
       - name: Locate project
         shell: bash
         run: |
           set -e
 
           if [ -f "project/package.json" ]; then
-            echo "PROJECT_ROOT=project" >> "$GITHUB_ENV"
+            ROOT="project"
 
           elif [ -f "project/v35work/package.json" ]; then
-            echo "PROJECT_ROOT=project/v35work" >> "$GITHUB_ENV"
+            ROOT="project/v35work"
+
+          elif [ -f "project/v40work/package.json" ]; then
+            ROOT="project/v40work"
+
+          elif [ -f "project/v41work/package.json" ]; then
+            ROOT="project/v41work"
 
           else
             echo "ERROR: package.json not found."
-            find project -maxdepth 4 -name package.json -print
+
+            find project \
+              -maxdepth 5 \
+              -name package.json \
+              -print
+
             exit 1
           fi
+
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+
+          echo "Project root:"
+          echo "$ROOT"
+
+      - name: Show project
+        run: |
+          echo "PROJECT_ROOT=$PROJECT_ROOT"
+          ls -la "$PROJECT_ROOT"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -71,47 +94,65 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg git unzip build-essential
+
+          sudo apt-get install -y \
+            ffmpeg \
+            git \
+            unzip \
+            build-essential \
+            cmake
+
+      # ============================================================
+      # PYTHON / AUDAR
+      # IMPORTANT:
+      # No torchaudio.
+      # Torch is pinned to 2.11 CPU.
+      # ============================================================
 
       - name: Create clean Python environment
         shell: bash
         run: |
           set -e
 
-          python -m venv .tts-venv
-
-          . .tts-venv/bin/activate
-
           python -m pip install --upgrade pip setuptools wheel
 
-          echo "Installing CPU-only PyTorch..."
+          echo "Removing conflicting Torch packages..."
 
-          pip install \
-            --index-url https://download.pytorch.org/whl/cpu \
-            "torch==2.11.0+cpu"
+          python -m pip uninstall -y \
+            torch \
+            torchvision \
+            torchaudio \
+            torchao \
+            neucodec \
+            llama-cpp-python \
+            transformers \
+            2>/dev/null || true
 
-          echo "Installing compatible audio packages..."
+          echo "Installing CPU Torch 2.11.0..."
 
-          pip install \
-            "neucodec>=0.1" \
+          python -m pip install \
+            torch==2.11.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+
+          echo "Installing Audar dependencies..."
+
+          python -m pip install \
+            "neucodec==0.17.0" \
             "soundfile>=0.12" \
             "librosa>=0.10" \
             "numpy>=1.24" \
-            "huggingface_hub"
+            "huggingface_hub>=0.30"
 
-          echo "Installing llama.cpp Python..."
+          echo "Installing llama.cpp..."
 
           CMAKE_ARGS="-DGGML_NATIVE=OFF" \
-          pip install "llama-cpp-python"
-
-          echo "Python environment ready."
+          python -m pip install \
+            "llama-cpp-python==0.3.36"
 
       - name: Verify Python environment
         shell: bash
         run: |
           set -e
-
-          . .tts-venv/bin/activate
 
           python - <<'PY'
           import torch
@@ -121,6 +162,10 @@ jobs:
           import huggingface_hub
           import llama_cpp
 
+          print("================================")
+          print("PYTHON ENVIRONMENT")
+          print("================================")
+
           print("torch:", torch.__version__)
           print("neucodec:", getattr(neucodec, "__version__", "installed"))
           print("soundfile:", soundfile.__version__)
@@ -128,48 +173,17 @@ jobs:
           print("huggingface_hub:", huggingface_hub.__version__)
           print("llama_cpp:", llama_cpp.__version__)
 
-          assert torch.__version__.startswith("2.11.0")
+          assert torch.__version__.startswith("2.11.")
+
+          print("")
+          print("OK: Torch 2.11 CPU")
+          print("OK: No torchaudio required")
+          print("OK: Audar dependencies loaded")
           PY
 
-          echo "Environment verification passed."
-
-      - name: Prepare Audar generator
-        working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -f "scripts/generate_story_audio.py" ]; then
-            echo "ERROR: generator not found."
-            exit 1
-          fi
-
-          cp scripts/generate_story_audio.py \
-             scripts/generate_story_audio.original.py
-
-          python - <<'PY'
-          from pathlib import Path
-
-          p = Path("scripts/generate_story_audio.py")
-          s = p.read_text(encoding="utf-8")
-
-          old = '''    run([sys.executable, "-m", "pip", "install", "-r", str(AUDIO_REPO / "examples" / "requirements.txt")])
-              run([sys.executable, "-m", "pip", "install", "llama-cpp-python", "neucodec", "soundfile", "torch", "librosa", "huggingface_hub"])
-          '''
-
-          new = '''    # Dependencies are installed by the GitHub Actions workflow.
-              # Do NOT install torch/torchaudio/torchao here.
-          '''
-
-          if old not in s:
-              print("Generator dependency block already compatible or changed upstream.")
-          else:
-              s = s.replace(old, new)
-
-          p.write_text(s, encoding="utf-8")
-          PY
-
-          echo "Generator prepared."
+      # ============================================================
+      # STORY AUDIO
+      # ============================================================
 
       - name: Generate story narration
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -177,11 +191,22 @@ jobs:
         run: |
           set -e
 
-          . "$GITHUB_WORKSPACE/.tts-venv/bin/activate"
-
           echo "Starting Audar story narration..."
 
-          python scripts/generate_story_audio.py
+          if [ ! -f "scripts/generate_story_audio.py" ]; then
+            echo "ERROR:"
+            echo "scripts/generate_story_audio.py not found."
+
+            find . \
+              -maxdepth 4 \
+              -type f \
+              -name "generate_story_audio.py" \
+              -print
+
+            exit 1
+          fi
+
+          python3 scripts/generate_story_audio.py
 
       - name: Verify story audio
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -189,26 +214,33 @@ jobs:
         run: |
           set -e
 
-          if [ ! -d "public/story-audio" ]; then
-            echo "ERROR: story-audio directory does not exist."
+          AUDIO_DIR="public/story-audio"
+
+          if [ ! -d "$AUDIO_DIR" ]; then
+            echo "ERROR: story audio directory does not exist."
             exit 1
           fi
 
-          COUNT=$(find public/story-audio \
+          COUNT=$(find "$AUDIO_DIR" \
             -type f \
-            -name "*.mp3" | wc -l)
+            -iname "*.mp3" | wc -l)
 
-          echo "Generated MP3 files: $COUNT"
+          echo "Generated MP3 files:"
+          echo "$COUNT"
 
           if [ "$COUNT" -lt 1 ]; then
             echo "ERROR: No MP3 files generated."
             exit 1
           fi
 
-          find public/story-audio \
+          find "$AUDIO_DIR" \
             -type f \
-            -name "*.mp3" \
+            -iname "*.mp3" \
             -print
+
+      # ============================================================
+      # NODE / CAPACITOR
+      # ============================================================
 
       - name: Install npm dependencies
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -244,7 +276,13 @@ jobs:
           const config: CapacitorConfig = {
             appId: 'com.leyhqalha.leyh',
             appName: 'ليه قالها',
-            webDir: 'dist'
+            webDir: 'dist',
+
+            plugins: {
+              LocalNotifications: {
+                smallIcon: 'ic_stat_icon_config_sample'
+              }
+            }
           };
 
           export default config;
@@ -269,6 +307,9 @@ jobs:
           if [ -f "scripts/prepare_android.sh" ]; then
             chmod +x scripts/prepare_android.sh
             bash scripts/prepare_android.sh
+          else
+            echo "prepare_android.sh not found."
+            echo "Continuing..."
           fi
 
       - name: Sync Capacitor
@@ -276,24 +317,53 @@ jobs:
         run: |
           npx cap sync android
 
-      - name: Remove old TTS engine
+      # ============================================================
+      # MAKE SURE KAREEM / SHERPA ARE GONE
+      # ============================================================
+
+      - name: Verify old TTS is removed
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
         run: |
           set -e
 
-          find android/app/src/main \
+          echo "Checking for old Kareem/Sherpa files..."
+
+          FOUND=0
+
+          if find android/app/src/main \
             -type f \
             \( \
               -iname "*.onnx" \
               -o -iname "*kareem*" \
               -o -iname "*sherpa*" \
               -o -iname "*OfflineTts*" \
-            \) \
-            -print \
-            -delete || true
+            \) | grep -q .; then
 
-          echo "Old TTS files removed."
+            FOUND=1
+
+            echo "Old TTS files found:"
+            find android/app/src/main \
+              -type f \
+              \( \
+                -iname "*.onnx" \
+                -o -iname "*kareem*" \
+                -o -iname "*sherpa*" \
+                -o -iname "*OfflineTts*" \
+              \)
+          fi
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo ""
+            echo "ERROR: Old TTS engine still exists."
+            exit 1
+          fi
+
+          echo "OK: Kareem/Sherpa not bundled."
+
+      # ============================================================
+      # JAVA / ANDROID
+      # ============================================================
 
       - name: Setup Java
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
@@ -303,9 +373,16 @@ jobs:
 
       - name: Build APK
         working-directory: ${{ env.PROJECT_ROOT }}/android
+        shell: bash
         run: |
+          set -e
+
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+
+          ./gradlew \
+            assembleDebug \
+            --no-daemon \
+            --stacktrace
 
       - name: Verify APK
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -316,10 +393,17 @@ jobs:
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not generated."
+            echo "ERROR: APK was not created."
+
+            find android/app/build/outputs \
+              -type f \
+              -name "*.apk" \
+              -print
+
             exit 1
           fi
 
+          echo "APK successfully created:"
           ls -lh "$APK"
 
       - name: Upload APK
