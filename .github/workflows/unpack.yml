@@ -70,25 +70,40 @@ jobs:
 
           python -m pip install transformers==4.49.0
 
+          # Keep torchao compatible with PyTorch 2.6.
+          python -m pip install torchao==0.12.0
+
+          # Install the speech model dependencies.
           python -m pip install \
             neucodec==0.0.6 \
             soundfile==0.13.1 \
             huggingface_hub==0.30.2 \
             llama-cpp-python==0.3.16
 
+          # Fail early if dependency resolution changed the pinned versions
+          # or if the speech libraries cannot be imported.
           python - <<'PY'
           import torch
           import torchaudio
           import transformers
+          import torchao
           import neucodec
 
           print("torch:", torch.__version__)
           print("torchaudio:", torchaudio.__version__)
           print("transformers:", transformers.__version__)
-          print("neucodec: OK")
+          print("torchao:", torchao.__version__)
+          print("neucodec import: OK")
 
-          assert torch.__version__.startswith("2.6.0")
-          assert torchaudio.__version__.startswith("2.6.0")
+          assert torch.__version__.startswith("2.6.0"), (
+              f"Unexpected torch version: {torch.__version__}"
+          )
+          assert torchaudio.__version__.startswith("2.6.0"), (
+              f"Unexpected torchaudio version: {torchaudio.__version__}"
+          )
+          assert torchao.__version__.startswith("0.12.0"), (
+              f"Unexpected torchao version: {torchao.__version__}"
+          )
           PY
 
       - name: Check audio generator
